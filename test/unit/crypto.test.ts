@@ -29,6 +29,29 @@ describe('encryptSecret / decryptSecret', () => {
     expect(() => decryptSecret(TEST_KEY, 'v2:a:b:c')).toThrow(DecryptError);
     expect(() => decryptSecret(TEST_KEY, 'garbage')).toThrow(DecryptError);
   });
+
+  it('rejects wrong part count', () => {
+    expect(() => decryptSecret(TEST_KEY, 'v1:a:b')).toThrow(DecryptError);
+  });
+
+  it('rejects truncated auth tag', () => {
+    const [v, n, c, t] = encryptSecret(TEST_KEY, 'secret').split(':');
+    const truncatedTag = Buffer.from(t, 'base64').subarray(0, 4).toString('base64');
+    expect(() => decryptSecret(TEST_KEY, [v, n, c, truncatedTag].join(':'))).toThrow(DecryptError);
+  });
+
+  it('rejects flipped tag byte', () => {
+    const [v, n, c, t] = encryptSecret(TEST_KEY, 'secret').split(':');
+    const flipped = Buffer.from(t, 'base64');
+    flipped[0] ^= 1;
+    expect(() => decryptSecret(TEST_KEY, [v, n, c, flipped.toString('base64')].join(':'))).toThrow(DecryptError);
+  });
+
+  it('round-trips empty-string plaintext', () => {
+    const enc = encryptSecret(TEST_KEY, '');
+    expect(enc.startsWith('v1:')).toBe(true);
+    expect(decryptSecret(TEST_KEY, enc)).toBe('');
+  });
 });
 
 describe('hashToken / randomToken', () => {

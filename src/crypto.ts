@@ -19,10 +19,17 @@ export function decryptSecret(key: Buffer, value: string): string {
   if (parts.length !== 4 || parts[0] !== VERSION) throw new DecryptError('Unsupported secret format');
   const [, nonce, ciphertext, tag] = parts;
   try {
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(nonce, 'base64'));
-    decipher.setAuthTag(Buffer.from(tag, 'base64'));
+    const nonceBuffer = Buffer.from(nonce, 'base64');
+    const tagBuffer = Buffer.from(tag, 'base64');
+
+    if (nonceBuffer.length !== 12) throw new DecryptError('Invalid nonce length');
+    if (tagBuffer.length !== 16) throw new DecryptError('Invalid auth tag length');
+
+    const decipher = createDecipheriv('aes-256-gcm', key, nonceBuffer, { authTagLength: 16 });
+    decipher.setAuthTag(tagBuffer);
     return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64')), decipher.final()]).toString('utf8');
-  } catch {
+  } catch (error) {
+    if (error instanceof DecryptError) throw error;
     throw new DecryptError('Secret could not be decrypted');
   }
 }
