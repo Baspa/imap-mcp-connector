@@ -11,8 +11,13 @@ export function sendsSince(db: Db, userId: number, since: number): { count: numb
   return { count: row.count, oldest: row.oldest };
 }
 
-export function recordLoginFailure(db: Db, key: string, now: number): void {
-  db.prepare('INSERT INTO login_attempts (key, attempted_at) VALUES (?, ?)').run(key, now);
+export function recordLoginFailure(db: Db, key: string, now: number): number {
+  const info = db.prepare('INSERT INTO login_attempts (key, attempted_at) VALUES (?, ?)').run(key, now);
+  return Number(info.lastInsertRowid);
+}
+
+export function deleteLoginAttempt(db: Db, id: number): void {
+  db.prepare('DELETE FROM login_attempts WHERE rowid = ?').run(id);
 }
 
 export function loginFailuresSince(db: Db, key: string, since: number): number {

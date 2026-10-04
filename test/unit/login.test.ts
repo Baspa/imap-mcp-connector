@@ -105,4 +105,76 @@ describe('login', () => {
     expect((await login(deps(), { ...input, email: 'nope' })).status).toBe('error');
     expect((await login(deps(), { ...input, password: '' })).status).toBe('error');
   });
+
+  it('existing user ignores manual settings', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const first = await login(d, input);
+    if (first.status !== 'ok') throw new Error('expected ok');
+
+    const evilSettings = { ...settings, imapHost: 'evil.org', smtpHost: 'evil.org' };
+    const second = await login(d, { ...input, manual: evilSettings, password: 'right' });
+
+    expect(second.status).toBe('ok');
+    if (second.status !== 'ok') return;
+    expect(second.user.imapHost).toBe('imap.x.org');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lastCall = (d.verifyImap as any).mock.calls[(d.verifyImap as any).mock.calls.length - 1];
+    expect(lastCall[0].imapHost).toBe('imap.x.org');
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lastGuardCall = (d.guard as any).mock.calls[(d.guard as any).mock.calls.length - 1];
+    expect(lastGuardCall[1].imapHost).toBe('imap.x.org');
+  });
+
+  it('rate limits are not bypassed by concurrent requests', async () => {
+    const d = deps({
+      verifyImap: vi.fn(async () => {
+        await new Promise(r => setTimeout(r, 20));
+        return 'bad_credentials' as VerifyResult;
+      }),
+    });
+
+    const calls = [];
+    for (let i = 0; i < 6; i++) {
+      calls.push(login(d, { ...input, password: 'wrong' }));
+    }
+    const results = await Promise.all(calls);
+
+    const errorCount = results.filter(r => r.status === 'error' && /Too many/.test(r.message)).length;
+    expect(errorCount).toBeGreaterThanOrEqual(1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((d.verifyImap as any).mock.calls.length).toBeLessThanOrEqual(5);
+  });
+
+  it('unavailable errors do not count as login failures', async () => {
+    let callCount = 0;
+    const d = deps({
+      verifyImap: vi.fn(async () => {
+        callCount++;
+        if (callCount <= 6) return 'unavailable' as VerifyResult;
+        return 'ok' as VerifyResult;
+      }),
+    });
+
+    for (let i = 0; i < 6; i++) {
+      const r = await login(d, { ...input, ip: `10.0.0.${i}` });
+      expect(r.status).toBe('error');
+    }
+
+    const goodResult = await login(d, { ...input, password: 'right', ip: '9.9.9.9' });
+    expect(goodResult.status).toBe('ok');
+  });
+
+  it('rate limits IP after 10 bad attempts and rejects 11th without verifying', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong' });
+    }
+
+    const r = await login(d, { ...input, email: 'u11@x.org' });
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((d.verifyImap as any).mock.calls.length).toBe(10);
+  });
 });

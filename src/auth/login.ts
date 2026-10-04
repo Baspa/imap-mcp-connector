@@ -1,6 +1,6 @@
 import type { Config } from '../config.js';
 import { encryptSecret } from '../crypto.js';
-import { loginFailuresSince, recordLoginFailure } from '../db/counters.js';
+import { deleteLoginAttempt, loginFailuresSince, recordLoginFailure } from '../db/counters.js';
 import type { Db } from '../db/index.js';
 import {
   createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, type User,
@@ -46,12 +46,6 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const since = now - WINDOW_MS;
   const ipKey = `ip:${input.ip}`;
   const emailKey = `email:${email}`;
-  if (
-    loginFailuresSince(deps.db, ipKey, since) >= MAX_FAILURES_PER_IP ||
-    loginFailuresSince(deps.db, emailKey, since) >= MAX_FAILURES_PER_EMAIL
-  ) {
-    return { status: 'error', message: 'Too many sign-in attempts. Try again in 15 minutes.' };
-  }
 
   const existing = findUserByEmail(deps.db, email);
   const settings = existing ? serverSettingsOf(existing) : (input.manual ?? (await deps.discover(email)));
@@ -66,18 +60,33 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     throw err;
   }
 
+  const ipAttemptId = recordLoginFailure(deps.db, ipKey, now);
+  const emailAttemptId = recordLoginFailure(deps.db, emailKey, now);
+
+  if (
+    loginFailuresSince(deps.db, ipKey, since) > MAX_FAILURES_PER_IP ||
+    loginFailuresSince(deps.db, emailKey, since) > MAX_FAILURES_PER_EMAIL
+  ) {
+    deleteLoginAttempt(deps.db, ipAttemptId);
+    deleteLoginAttempt(deps.db, emailAttemptId);
+    return { status: 'error', message: 'Too many sign-in attempts. Try again in 15 minutes.' };
+  }
+
   const result = await deps.verifyImap(
     { email, imapHost: settings.imapHost, imapPort: settings.imapPort, imapSecurity: settings.imapSecurity },
     input.password,
   );
   if (result === 'unavailable') {
+    deleteLoginAttempt(deps.db, ipAttemptId);
+    deleteLoginAttempt(deps.db, emailAttemptId);
     return { status: 'error', message: "Couldn't reach your mail server. Check the settings or try again shortly." };
   }
   if (result === 'bad_credentials') {
-    recordLoginFailure(deps.db, ipKey, now);
-    recordLoginFailure(deps.db, emailKey, now);
     return { status: 'error', message: BAD_CREDENTIALS };
   }
+
+  deleteLoginAttempt(deps.db, ipAttemptId);
+  deleteLoginAttempt(deps.db, emailAttemptId);
 
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
