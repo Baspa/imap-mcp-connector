@@ -27,7 +27,7 @@ export function snippet(text: string, max = 200): string {
 }
 
 export function wrapUntrusted(text: string): string {
-  const safe = text.replace(/<\/?\s*untrusted_email_content[^>]*>/gi, '[tag removed]');
+  const safe = text.replace(/untrusted_email_content/gi, 'untrusted-email-content');
   return `<${TAG}>\n${safe}\n</${TAG}>`;
 }
 
