@@ -11,6 +11,7 @@ import type { Db } from './db/index.js';
 import { log } from './log.js';
 import type { MailPool } from './mail/pool.js';
 import type { SmtpFactory } from './mail/smtp.js';
+import { mcpRouter } from './mcp/http.js';
 import { consentRouter } from './web/consent.js';
 import { webRouter } from './web/routes.js';
 
@@ -85,6 +86,8 @@ export function createApp(deps: AppDeps): express.Express {
       resourceName: 'IMAP Connector',
     }),
   );
+
+  app.use(mcpRouter(deps));
 
   app.use(
     session({
