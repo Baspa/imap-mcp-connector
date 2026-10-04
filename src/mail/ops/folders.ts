@@ -52,21 +52,24 @@ export async function listFolders(client: ImapFlow): Promise<FolderInfo[]> {
 }
 
 export async function resolveRole(client: ImapFlow, role: FolderRole): Promise<string> {
-  const folders = await client.list();
-  const bySpecialUse = folders.find((f) => roleOf(f) === role);
+  const folders = (await client.list()).filter((f) => !f.flags.has('\\Noselect'));
+  // imapflow also guesses specialUse from folder names (source 'name'); those are handled by the top-level name fallback below.
+  const bySpecialUse = folders.find((f) => roleOf(f) === role && f.specialUseSource !== 'name');
   if (bySpecialUse) return bySpecialUse.path;
   const names = NAME_FALLBACK[role];
-  const byName = folders.find((f) => names.includes(f.name.toLowerCase()) || names.includes(f.path.toLowerCase()));
+  const byName = folders.find((f) => names.includes(f.path.toLowerCase()));
   if (byName) return byName.path;
   throw new MailError('NOT_FOUND', `This mailbox has no ${role} folder.`);
 }
 
-/** Accepts a folder path from list_folders, or a role name like "trash". */
+/** Accepts a folder path from list_folders, or a role name like "trash". Exact paths win over roles. */
 export async function resolveFolder(client: ImapFlow, nameOrRole: string): Promise<string> {
   const lower = nameOrRole.toLowerCase();
+  const folders = (await client.list()).filter((f) => !f.flags.has('\\Noselect'));
+  const exact = folders.find((f) => f.path === nameOrRole);
+  if (exact) return exact.path;
   if ((FOLDER_ROLES as string[]).includes(lower)) return resolveRole(client, lower as FolderRole);
-  const folders = await client.list();
-  const match = folders.find((f) => f.path === nameOrRole) ?? folders.find((f) => f.path.toLowerCase() === lower);
+  const match = folders.find((f) => f.path.toLowerCase() === lower);
   if (!match) throw new MailError('NOT_FOUND', `Folder "${nameOrRole}" does not exist. Use list_folders to see folder paths.`);
   return match.path;
 }

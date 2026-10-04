@@ -37,6 +37,18 @@ describe('folders', () => {
   });
 });
 
+describe('folder resolution edge cases', () => {
+  it('falls back to case-insensitive paths and ignores nested folders for role names', async () => {
+    await client.mailboxCreate('Projects');
+    const delimiter = (await client.list()).find((f) => f.path === 'INBOX')?.delimiter ?? '/';
+    await client.mailboxCreate(`Projects${delimiter}Sent`);
+    expect(await resolveFolder(client, 'projects')).toBe('Projects');
+    expect(await resolveFolder(client, 'Sent')).toBe('Sent');
+    expect(await resolveRole(client, 'sent')).toBe('Sent');
+    expect(await resolveFolder(client, `Projects${delimiter}Sent`)).toBe(`Projects${delimiter}Sent`);
+  });
+});
+
 describe('searchMessages', () => {
   it('filters by subject, sender and unread, newest first, with snippets', async () => {
     await appendMessage(client, 'INBOX', { subject: 'Invoice March', from: 'billing@shop.com', text: 'Your invoice total is 10 EUR' });
@@ -70,9 +82,12 @@ describe('searchMessages', () => {
     expect(all).toEqual([...all].sort((a, b) => b - a));
   });
 
-  it('caps the limit at 100 and validates input', async () => {
-    await appendMessage(client, 'INBOX', { subject: 'x', text: 'x' });
-    expect((await searchMessages(client, { limit: 1000 })).messages).toHaveLength(1);
+  it('caps the limit at 100, defaults non-finite limits, and validates input', async () => {
+    for (let i = 0; i < 101; i++) await appendMessage(client, 'INBOX', { subject: `m${i}`, text: 'x' });
+    const capped = await searchMessages(client, { limit: 1000 });
+    expect(capped.messages).toHaveLength(100);
+    expect(capped.nextCursor).not.toBeNull();
+    expect((await searchMessages(client, { limit: Number.NaN })).messages).toHaveLength(20);
     await expect(searchMessages(client, { since: 'not a date' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await expect(searchMessages(client, { cursor: 'abc' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await expect(searchMessages(client, { folder: 'Missing' })).rejects.toMatchObject({ code: 'NOT_FOUND' });

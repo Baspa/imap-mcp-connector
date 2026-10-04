@@ -50,8 +50,12 @@ function buildQuery(input: SearchInput): SearchObject {
 async function summarize(msg: FetchMessageObject): Promise<MessageSummary> {
   let preview = '';
   if (msg.source) {
-    const parsed = await simpleParser(msg.source);
-    preview = parsed.text ?? (parsed.html ? htmlToText(parsed.html) : '');
+    try {
+      const parsed = await simpleParser(msg.source);
+      preview = parsed.text ?? (parsed.html ? htmlToText(parsed.html) : '');
+    } catch {
+      preview = '';
+    }
   }
   return {
     uid: msg.uid,
@@ -69,7 +73,7 @@ export async function searchMessages(
   input: SearchInput,
 ): Promise<{ folder: string; messages: MessageSummary[]; nextCursor: string | null }> {
   const query = buildQuery(input);
-  const limit = Math.min(Math.max(Math.trunc(input.limit ?? 20), 1), 100);
+  const limit = Math.min(Math.max(Math.trunc(Number.isFinite(input.limit) ? (input.limit as number) : 20), 1), 100);
   let cursor = Number.POSITIVE_INFINITY;
   if (input.cursor !== undefined) {
     cursor = Number(input.cursor);
