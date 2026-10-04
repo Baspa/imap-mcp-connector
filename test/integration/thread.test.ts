@@ -53,4 +53,24 @@ describe('getThread', () => {
   it('is NOT_FOUND for a missing uid', async () => {
     await expect(getThread(client, 'INBOX', 99999)).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
+
+  it('collects the whole conversation when starting from a reply in Sent', async () => {
+    const uid = await findUid(client, 'Sent', 'Trip plans');
+    const thread = await getThread(client, 'Sent', uid);
+    expect(thread.map((m) => m.messageId)).toEqual(['<root@test>', '<r1@test>', '<r2@test>']);
+  });
+
+  it('returns only the newest `max` messages, including the requested one', async () => {
+    const uid = await findUid(client, 'INBOX', 'dates');
+    const thread = await getThread(client, 'INBOX', uid, 2);
+    expect(thread.map((m) => m.messageId)).toEqual(['<r1@test>', '<r2@test>']);
+  });
+
+  it('always includes the requested message even when it falls outside `max`', async () => {
+    const lock = await client.getMailboxLock('INBOX');
+    const [rootUid] = (await client.search({ header: { 'message-id': '<root@test>' } }, { uid: true })) || [];
+    lock.release();
+    const thread = await getThread(client, 'INBOX', rootUid, 1);
+    expect(thread.map((m) => m.messageId)).toEqual(['<root@test>']);
+  });
 });
