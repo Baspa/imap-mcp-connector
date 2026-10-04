@@ -10,14 +10,33 @@ interface XmlServer {
 
 const SOCKET: Record<string, Security> = { SSL: 'tls', STARTTLS: 'starttls' };
 
-function pick(servers: XmlServer[] | undefined, type: string): { host: string; port: number; security: Security } | null {
+function isValidPort(port: number): boolean {
+  return Number.isInteger(port) && port >= 1 && port <= 65535;
+}
+
+function isValidHostname(hostname: string): boolean {
+  return hostname.length > 0 && !hostname.includes('%');
+}
+
+function pick(servers: XmlServer[] | undefined, type: string, domain?: string): { host: string; port: number; security: Security } | null {
   const candidates = (servers ?? [])
     .filter((s) => s['@_type'] === type && s.hostname && s.socketType && SOCKET[s.socketType])
-    .map((s) => ({ host: String(s.hostname), port: Number(s.port), security: SOCKET[s.socketType!] }));
+    .map((s) => {
+      let hostname = String(s.hostname);
+      if (domain) {
+        hostname = hostname.replace('%EMAILDOMAIN%', domain);
+      }
+      return {
+        host: hostname,
+        port: Number(s.port),
+        security: SOCKET[s.socketType!],
+      };
+    })
+    .filter((s) => isValidPort(s.port) && isValidHostname(s.host));
   return candidates.find((c) => c.security === 'tls') ?? candidates[0] ?? null;
 }
 
-export function parseIspdb(xml: string): MailServerSettings | null {
+export function parseIspdb(xml: string, domain?: string): MailServerSettings | null {
   try {
     const parser = new XMLParser({
       ignoreAttributes: false,
@@ -27,8 +46,8 @@ export function parseIspdb(xml: string): MailServerSettings | null {
     const doc = parser.parse(xml);
     const provider = doc?.clientConfig?.emailProvider;
     if (!provider) return null;
-    const imap = pick(provider.incomingServer, 'imap');
-    const smtp = pick(provider.outgoingServer, 'smtp');
+    const imap = pick(provider.incomingServer, 'imap', domain);
+    const smtp = pick(provider.outgoingServer, 'smtp', domain);
     if (!imap || !smtp) return null;
     return {
       imapHost: imap.host,
@@ -50,7 +69,7 @@ export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch):
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
-    return parseIspdb(await res.text());
+    return parseIspdb(await res.text(), domain);
   } catch {
     return null;
   }

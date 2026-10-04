@@ -31,6 +31,85 @@ describe('parseIspdb', () => {
   it('returns null for invalid XML', () => {
     expect(parseIspdb('not xml')).toBeNull();
   });
+
+  it('skips candidates with missing or non-numeric port', () => {
+    const xml = `<?xml version="1.0"?>
+<clientConfig version="1.1">
+  <emailProvider id="example.org">
+    <domain>example.org</domain>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port></port><socketType>SSL</socketType></incomingServer>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port>993</port><socketType>SSL</socketType></incomingServer>
+    <outgoingServer type="smtp"><hostname>smtp.example.org</hostname><port>587</port><socketType>STARTTLS</socketType></outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+    expect(parseIspdb(xml)).toEqual({
+      imapHost: 'imap.example.org', imapPort: 993, imapSecurity: 'tls',
+      smtpHost: 'smtp.example.org', smtpPort: 587, smtpSecurity: 'starttls',
+      autoSavesSent: false,
+    });
+  });
+
+  it('substitutes %EMAILDOMAIN% placeholder when domain is provided', () => {
+    const xml = `<?xml version="1.0"?>
+<clientConfig version="1.1">
+  <emailProvider id="example.org">
+    <domain>example.org</domain>
+    <incomingServer type="imap"><hostname>imap.%EMAILDOMAIN%</hostname><port>993</port><socketType>SSL</socketType></incomingServer>
+    <outgoingServer type="smtp"><hostname>smtp.%EMAILDOMAIN%</hostname><port>587</port><socketType>STARTTLS</socketType></outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+    expect(parseIspdb(xml, 'example.org')).toEqual({
+      imapHost: 'imap.example.org', imapPort: 993, imapSecurity: 'tls',
+      smtpHost: 'smtp.example.org', smtpPort: 587, smtpSecurity: 'starttls',
+      autoSavesSent: false,
+    });
+  });
+
+  it('skips hostname with other placeholders', () => {
+    const xml = `<?xml version="1.0"?>
+<clientConfig version="1.1">
+  <emailProvider id="example.org">
+    <domain>example.org</domain>
+    <incomingServer type="imap"><hostname>%EMAILLOCALPART%.example.org</hostname><port>993</port><socketType>SSL</socketType></incomingServer>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port>993</port><socketType>SSL</socketType></incomingServer>
+    <outgoingServer type="smtp"><hostname>smtp.example.org</hostname><port>587</port><socketType>STARTTLS</socketType></outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+    expect(parseIspdb(xml)).toEqual({
+      imapHost: 'imap.example.org', imapPort: 993, imapSecurity: 'tls',
+      smtpHost: 'smtp.example.org', smtpPort: 587, smtpSecurity: 'starttls',
+      autoSavesSent: false,
+    });
+  });
+
+  it('selects STARTTLS IMAP over plain IMAP when no SSL available', () => {
+    const xml = `<?xml version="1.0"?>
+<clientConfig version="1.1">
+  <emailProvider id="example.org">
+    <domain>example.org</domain>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port>143</port><socketType>plain</socketType></incomingServer>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port>143</port><socketType>STARTTLS</socketType></incomingServer>
+    <outgoingServer type="smtp"><hostname>smtp.example.org</hostname><port>587</port><socketType>SSL</socketType></outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+    expect(parseIspdb(xml)).toEqual({
+      imapHost: 'imap.example.org', imapPort: 143, imapSecurity: 'starttls',
+      smtpHost: 'smtp.example.org', smtpPort: 587, smtpSecurity: 'tls',
+      autoSavesSent: false,
+    });
+  });
+
+  it('returns null when only IMAP is plaintext but SMTP has security', () => {
+    const xml = `<?xml version="1.0"?>
+<clientConfig version="1.1">
+  <emailProvider id="example.org">
+    <domain>example.org</domain>
+    <incomingServer type="imap"><hostname>imap.example.org</hostname><port>143</port><socketType>plain</socketType></incomingServer>
+    <outgoingServer type="smtp"><hostname>smtp.example.org</hostname><port>587</port><socketType>STARTTLS</socketType></outgoingServer>
+  </emailProvider>
+</clientConfig>`;
+    expect(parseIspdb(xml)).toBeNull();
+  });
 });
 
 describe('fetchIspdb', () => {
@@ -90,5 +169,17 @@ describe('discoverSettings', () => {
   it('covers borrowed presets such as GMX and Posteo', async () => {
     expect(await discoverSettings('a@gmx.de', none)).toMatchObject({ imapHost: 'imap.gmx.net', smtpHost: 'mail.gmx.net', smtpPort: 587, smtpSecurity: 'starttls' });
     expect(await discoverSettings('a@posteo.net', none)).toMatchObject({ imapHost: 'posteo.de' });
+  });
+
+  it('protects against prototype pollution (constructor, __proto__)', async () => {
+    expect(await discoverSettings('a@constructor', none)).toBeNull();
+    expect(await discoverSettings('a@__proto__', none)).toBeNull();
+  });
+
+  it('returns copies of preset settings so callers cannot mutate the table', async () => {
+    const result1 = await discoverSettings('Someone@Gmail.com', none);
+    if (result1) result1.imapHost = 'mutated.example.org';
+    const result2 = await discoverSettings('Someone@Gmail.com', none);
+    expect(result2?.imapHost).toBe('imap.gmail.com');
   });
 });

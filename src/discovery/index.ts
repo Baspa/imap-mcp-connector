@@ -21,7 +21,7 @@ export async function discoverSettings(
   if (at < 0) return null;
   const domain = email.slice(at + 1).trim().toLowerCase();
   if (!domain) return null;
-  if (PRESETS[domain]) return PRESETS[domain];
+  if (Object.hasOwn(PRESETS, domain)) return { ...PRESETS[domain] };
   for (const lookup of [deps.ispdb, deps.srv]) {
     try {
       const found = await lookup(domain);

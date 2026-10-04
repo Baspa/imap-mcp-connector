@@ -1,6 +1,6 @@
 // Provider hosts, ports and domains adapted from nikolausm/imap-mcp-server
 // (src/providers/email-providers.ts), MIT License, Copyright (c) 2024 Michael Nikolaus.
-// See THIRD_PARTY_NOTICES.md.
+// See THIRD_PARTY_NOTICES.md. Outlook/Microsoft 365 (need OAuth) and Proton (local Bridge) are omitted.
 import type { MailServerSettings } from '../types.js';
 
 const tls = (imapHost: string, smtpHost: string, smtpPort = 465, autoSavesSent = false): MailServerSettings => ({
