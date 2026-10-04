@@ -154,12 +154,16 @@ describe('counters and purge', () => {
     const db = testDb();
     const u = createTestUser(db);
     insertClient(db, client, 1);
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = 3 * DAY;
     token(db, u.id, 'old', 'access', 'g1', 10);
-    token(db, u.id, 'new', 'access', 'g1', 10_000_000);
+    token(db, u.id, 'new', 'access', 'g1', now + DAY);
     recordLoginFailure(db, 'k', 1);
-    purgeExpired(db, 5_000_000);
+    recordLoginFailure(db, 'recent', now - 1000);
+    purgeExpired(db, now);
     expect(getToken(db, 'old')).toBeUndefined();
     expect(getToken(db, 'new')).toBeDefined();
     expect(loginFailuresSince(db, 'k', 0)).toBe(0);
+    expect(loginFailuresSince(db, 'recent', 0)).toBe(1);
   });
 });

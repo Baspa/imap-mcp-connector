@@ -1,6 +1,6 @@
 import type { Db } from './index.js';
 
-const DAY = 24 * 60 * 60;
+const DAY = 24 * 60 * 60 * 1000;
 
 export function purgeExpired(db: Db, now: number): void {
   db.transaction(() => {
