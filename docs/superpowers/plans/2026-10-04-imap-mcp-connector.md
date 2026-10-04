@@ -1374,6 +1374,9 @@ Expected: FAIL — module not found.
 
 `src/discovery/presets.ts`:
 ```ts
+// Provider hosts, ports and domains adapted from nikolausm/imap-mcp-server
+// (src/providers/email-providers.ts), MIT License, Copyright (c) 2024 Michael Nikolaus.
+// See THIRD_PARTY_NOTICES.md. Outlook/Microsoft 365 (need OAuth) and Proton (local Bridge) are omitted.
 import type { MailServerSettings } from '../types.js';
 
 const tls = (imapHost: string, smtpHost: string, smtpPort = 465, autoSavesSent = false): MailServerSettings => ({
@@ -1386,22 +1389,63 @@ const tls = (imapHost: string, smtpHost: string, smtpPort = 465, autoSavesSent =
   autoSavesSent,
 });
 
-const GMAIL = tls('imap.gmail.com', 'smtp.gmail.com', 465, true);
-const ICLOUD = tls('imap.mail.me.com', 'smtp.mail.me.com', 587);
-const YAHOO = tls('imap.mail.yahoo.com', 'smtp.mail.yahoo.com');
-const FASTMAIL = tls('imap.fastmail.com', 'smtp.fastmail.com');
-const ZOHO = tls('imap.zoho.com', 'smtp.zoho.com');
+const PROVIDERS: { settings: MailServerSettings; domains: string[] }[] = [
+  { settings: tls('imap.gmail.com', 'smtp.gmail.com', 465, true), domains: ['gmail.com', 'googlemail.com'] },
+  { settings: tls('imap.mail.me.com', 'smtp.mail.me.com', 587), domains: ['icloud.com', 'me.com', 'mac.com'] },
+  { settings: tls('imap.mail.yahoo.com', 'smtp.mail.yahoo.com'), domains: ['yahoo.com', 'yahoo.de', 'yahoo.co.uk', 'ymail.com'] },
+  { settings: tls('imap.aol.com', 'smtp.aol.com'), domains: ['aol.com', 'aol.de'] },
+  { settings: tls('imap.fastmail.com', 'smtp.fastmail.com'), domains: ['fastmail.com', 'fastmail.fm'] },
+  { settings: tls('imap.zoho.com', 'smtp.zoho.com'), domains: ['zoho.com', 'zohomail.com'] },
+  { settings: tls('imap.gmx.net', 'mail.gmx.net', 587), domains: ['gmx.net', 'gmx.de', 'gmx.at', 'gmx.ch', 'gmx.com'] },
+  { settings: tls('imap.web.de', 'smtp.web.de', 587), domains: ['web.de'] },
+  { settings: tls('imap.ionos.de', 'smtp.ionos.de', 587), domains: ['ionos.de', '1und1.de', '1and1.com'] },
+  { settings: tls('imap.mailbox.org', 'smtp.mailbox.org', 587), domains: ['mailbox.org'] },
+  { settings: tls('posteo.de', 'posteo.de', 587), domains: ['posteo.de', 'posteo.net'] },
+];
 
-export const PRESETS: Record<string, MailServerSettings> = {
-  'gmail.com': GMAIL,
-  'googlemail.com': GMAIL,
-  'icloud.com': ICLOUD,
-  'me.com': ICLOUD,
-  'mac.com': ICLOUD,
-  'yahoo.com': YAHOO,
-  'fastmail.com': FASTMAIL,
-  'zoho.com': ZOHO,
-};
+export const PRESETS: Record<string, MailServerSettings> = Object.fromEntries(
+  PROVIDERS.flatMap((p) => p.domains.map((d) => [d, p.settings])),
+);
+```
+
+Also add a test case to the `discoverSettings` describe block in `test/unit/discovery.test.ts`:
+```ts
+  it('covers borrowed presets such as GMX and Posteo', async () => {
+    expect(await discoverSettings('a@gmx.de', none)).toMatchObject({ imapHost: 'imap.gmx.net', smtpHost: 'mail.gmx.net', smtpPort: 587, smtpSecurity: 'starttls' });
+    expect(await discoverSettings('a@posteo.net', none)).toMatchObject({ imapHost: 'posteo.de' });
+  });
+```
+
+Create `THIRD_PARTY_NOTICES.md` in the same commit:
+```markdown
+# Third-party notices
+
+## nikolausm/imap-mcp-server
+
+Mail provider presets in `src/discovery/presets.ts` are adapted from
+https://github.com/nikolausm/imap-mcp-server (`src/providers/email-providers.ts`).
+
+MIT License
+
+Copyright (c) 2024 Michael Nikolaus
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 ```
 
 `src/discovery/ispdb.ts`:
@@ -1555,7 +1599,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/discovery test/unit/discovery.test.ts
+git add src/discovery test/unit/discovery.test.ts THIRD_PARTY_NOTICES.md
 git commit -m "feat: auto-discover IMAP/SMTP settings from presets, ISPDB and SRV"
 ```
 
@@ -6680,7 +6724,7 @@ Gmail's native thread search (`X-GM-EXT-1`) is not covered by the automated test
 
 ## License
 
-MIT
+MIT. Mail provider presets are adapted from [nikolausm/imap-mcp-server](https://github.com/nikolausm/imap-mcp-server) (MIT); see `THIRD_PARTY_NOTICES.md`.
 ````
 
 - [ ] **Step 7: Run the full verification suite**
