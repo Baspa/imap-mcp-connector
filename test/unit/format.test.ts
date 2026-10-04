@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildReplyHeaders, formatAddress, htmlToText, parseMessageIds, snippet, truncateUtf8, wrapUntrusted,
+  buildReplyHeaders, formatAddress, htmlToText, parseMessageIds, snippet, toIsoDate, truncateUtf8, wrapUntrusted,
 } from '../../src/mail/format.js';
 
 describe('format', () => {
@@ -84,5 +84,14 @@ describe('format', () => {
       subject: 'Re: Hello',
     });
     expect(buildReplyHeaders({ messageId: null, references: [], subject: 'RE: Hi' })).toEqual({ subject: 'RE: Hi' });
+  });
+
+  it('toIsoDate returns ISO strings and null for missing or invalid dates', () => {
+    expect(toIsoDate(new Date('2025-09-01T10:00:00Z'))).toBe('2025-09-01T10:00:00.000Z');
+    expect(toIsoDate('2025-09-01T10:00:00Z')).toBe('2025-09-01T10:00:00.000Z');
+    expect(toIsoDate(undefined)).toBeNull();
+    expect(toIsoDate(null)).toBeNull();
+    expect(toIsoDate('not a real date')).toBeNull();
+    expect(toIsoDate(new Date('nope'))).toBeNull();
   });
 });

@@ -37,6 +37,13 @@ export function formatAddress(a?: { name?: string; address?: string }): string {
   return a.address ?? a.name ?? '';
 }
 
+/** ISO-8601 string for a date-like value, or null when missing or unparseable. */
+export function toIsoDate(value: unknown): string | null {
+  if (value === undefined || value === null || value === '') return null;
+  const d = value instanceof Date ? value : new Date(value as string | number);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export function parseMessageIds(header: string): string[] {
   return header.match(/<[^<>\s]+>/g) ?? [];
 }

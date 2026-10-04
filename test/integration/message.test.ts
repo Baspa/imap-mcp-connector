@@ -2,6 +2,7 @@ import type { ImapFlow } from 'imapflow';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getAttachment } from '../../src/mail/ops/attachment.js';
 import { getMessage } from '../../src/mail/ops/message.js';
+import { searchMessages } from '../../src/mail/ops/search.js';
 import { tinyPdf } from '../helpers/pdf.js';
 import { appendMessage, appendRaw, connectImap, createFolders, createMailUser, findUid } from './mail-helpers.js';
 
@@ -85,6 +86,33 @@ describe('getMessage', () => {
     expect(Buffer.byteLength(m.body)).toBeLessThan(50_100);
   });
 
+  it('tolerates an unparseable Date header', async () => {
+    const raw = Buffer.from(
+      [
+        'From: a@example.com',
+        'To: me@test.local',
+        'Subject: BadDate',
+        'Message-ID: <baddate@test>',
+        'Date: not a real date',
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'body text',
+        '',
+      ].join('\r\n'),
+    );
+    await appendRaw(client, 'INBOX', raw);
+    const uid = await findUid(client, 'INBOX', 'BadDate');
+    const m = await getMessage(client, 'INBOX', uid);
+    // GreenMail substitutes the internal date for an unparseable header, so null is covered by the toIsoDate unit test.
+    expect(m.date === null || !Number.isNaN(Date.parse(m.date))).toBe(true);
+    expect(m.body.trim()).toBe('body text');
+    const found = await searchMessages(client, { subject: 'BadDate' });
+    expect(found.messages).toHaveLength(1);
+    const d = found.messages[0].date;
+    expect(d === null || !Number.isNaN(Date.parse(d))).toBe(true);
+  });
+
   it('stale uid is NOT_FOUND', async () => {
     await appendMessage(client, 'INBOX', { subject: 'Gone', text: 'x' });
     const uid = await findUid(client, 'INBOX', 'Gone');
@@ -139,5 +167,30 @@ describe('getAttachment', () => {
     const hugeUid = await findUid(client, 'INBOX', 'Huge');
     const huge = await getMessage(client, 'INBOX', hugeUid);
     await expect(getAttachment(client, 'INBOX', hugeUid, huge.attachments[0].partId)).rejects.toMatchObject({ code: 'TOO_LARGE' });
+  });
+
+  it('returns a note for corrupt PDFs instead of throwing', async () => {
+    await appendMessage(client, 'INBOX', {
+      subject: 'Broken',
+      text: 'x',
+      attachments: [{ filename: 'broken.pdf', content: Buffer.from('%PDF-1.4 garbage'), contentType: 'application/pdf' }],
+    });
+    const uid = await findUid(client, 'INBOX', 'Broken');
+    const m = await getMessage(client, 'INBOX', uid);
+    const r = await getAttachment(client, 'INBOX', uid, m.attachments[0].partId);
+    expect(r.text).toBeNull();
+    expect(r.note).toMatch(/could not be read/);
+  });
+
+  it('decodes text attachments using their declared charset', async () => {
+    await appendMessage(client, 'INBOX', {
+      subject: 'Latin',
+      text: 'x',
+      attachments: [{ filename: 'latin.txt', content: Buffer.from('Grüße', 'latin1'), contentType: 'text/plain; charset=iso-8859-1' }],
+    });
+    const uid = await findUid(client, 'INBOX', 'Latin');
+    const m = await getMessage(client, 'INBOX', uid);
+    const r = await getAttachment(client, 'INBOX', uid, m.attachments[0].partId);
+    expect(r.text).toBe('Grüße');
   });
 });

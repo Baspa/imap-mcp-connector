@@ -28,8 +28,21 @@ function textKind(contentType: string, filename: string): TextKind | null {
 
 async function pdfText(buf: Buffer): Promise<string> {
   const pdf = await getDocumentProxy(new Uint8Array(buf));
-  const { text } = await extractText(pdf, { mergePages: true });
-  return text;
+  try {
+    const { text } = await extractText(pdf, { mergePages: true });
+    return text;
+  } finally {
+    await pdf.loadingTask.destroy();
+  }
+}
+
+/** Decodes bytes with the declared charset, falling back to UTF-8 for missing or unsupported labels. */
+function decodeText(buf: Buffer, charset?: string): string {
+  try {
+    return new TextDecoder(charset || 'utf-8', { fatal: false }).decode(buf);
+  } catch {
+    return new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  }
 }
 
 export async function getAttachment(
@@ -53,7 +66,17 @@ export async function getAttachment(
     if (!kind) return { ...base, text: null, truncated: false, note: 'Binary attachment; content not extracted.' };
 
     const buf = await downloadPart(client, uid, partId, MAX_ATTACHMENT_BYTES);
-    const raw = kind === 'pdf' ? await pdfText(buf) : kind === 'html' ? htmlToText(buf.toString('utf8')) : buf.toString('utf8');
+    let raw: string;
+    if (kind === 'pdf') {
+      try {
+        raw = await pdfText(buf);
+      } catch {
+        return { ...base, text: null, truncated: false, note: 'PDF could not be read (corrupt or password-protected).' };
+      }
+    } else {
+      const decoded = decodeText(buf, info.charset);
+      raw = kind === 'html' ? htmlToText(decoded) : decoded;
+    }
     const { text, truncated } = truncateUtf8(raw);
     return { ...base, text, truncated };
   } finally {

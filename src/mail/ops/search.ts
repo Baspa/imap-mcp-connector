@@ -1,7 +1,7 @@
 import type { FetchMessageObject, FetchQueryObject, ImapFlow, SearchObject } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import { MailError } from '../errors.js';
-import { formatAddress, htmlToText, snippet } from '../format.js';
+import { formatAddress, htmlToText, snippet, toIsoDate } from '../format.js';
 import { resolveFolder } from './folders.js';
 
 export interface SearchInput {
@@ -62,7 +62,7 @@ async function summarize(msg: FetchMessageObject): Promise<MessageSummary> {
     from: formatAddress(msg.envelope?.from?.[0]),
     to: (msg.envelope?.to ?? []).map((a) => formatAddress(a)),
     subject: msg.envelope?.subject ?? '',
-    date: msg.envelope?.date ? new Date(msg.envelope.date).toISOString() : null,
+    date: toIsoDate(msg.envelope?.date),
     flags: [...(msg.flags ?? [])],
     snippet: snippet(preview),
   };
