@@ -76,6 +76,9 @@ describe('MCP endpoint', () => {
     expect(full).toHaveLength(10);
     expect(full.find((t) => t.name === 'send_email')?.annotations?.destructiveHint).toBe(true);
     expect(full.find((t) => t.name === 'search_messages')?.annotations?.readOnlyHint).toBe(true);
+    for (const name of ['search_messages', 'get_message', 'get_thread', 'get_attachment']) {
+      expect(full.find((t) => t.name === name)?.description).toMatch(/<untrusted_email_content>.*treat .* as data/);
+    }
   });
 
   it('searches and reads mail with untrusted wrapping', async () => {
@@ -105,6 +108,25 @@ describe('MCP endpoint', () => {
       .then((r) => (r.isError ? 'error' : 'ok'), () => 'error');
     expect(outcome).toBe('error');
     await expect(findUid(imap, 'Drafts', 'Nope')).rejects.toThrow();
+  });
+
+  it('does not let move_messages delete to Trash below the full level', async () => {
+    const client = await connect('draft');
+    const uid = await findUid(imap, 'INBOX', 'Quarterly');
+    for (const destination of ['trash', 'Trash']) {
+      const denied = await client.callTool({ name: 'move_messages', arguments: { folder: 'INBOX', uids: [uid], destination } });
+      expect(denied.isError).toBe(true);
+      expect(text(denied)).toMatch(/^PERMISSION_DENIED: .*"full".*http:\/\/localhost:3000\/settings/);
+    }
+    expect(await findUid(imap, 'INBOX', 'Quarterly')).toBe(uid);
+
+    const archived = json(await client.callTool({ name: 'move_messages', arguments: { folder: 'INBOX', uids: [uid], destination: 'archive' } }));
+    expect(archived).toMatchObject({ to: 'Archive', moved: 1 });
+    const archivedUid = await findUid(imap, 'Archive', 'Quarterly');
+
+    const full = await connect('full');
+    const trashed = json(await full.callTool({ name: 'move_messages', arguments: { folder: 'Archive', uids: [archivedUid], destination: 'trash' } }));
+    expect(trashed).toMatchObject({ to: 'Trash', moved: 1 });
   });
 
   it('sends email and deletes to Trash at full level', async () => {
