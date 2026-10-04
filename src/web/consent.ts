@@ -17,6 +17,7 @@ export function consentRouter(deps: AppDeps): Router {
   const auth = requireUser(deps.db);
 
   router.get('/consent', auth, (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     const reqId = String(req.query.req ?? '');
     const described = deps.provider.describePending(reqId);
     if (!described) return expired(res);
@@ -33,16 +34,12 @@ export function consentRouter(deps: AppDeps): Router {
   });
 
   router.post('/consent', auth, verifyCsrf, (req, res) => {
-    const body = req.body as Record<string, string | undefined>;
-    const reqId = body.req ?? '';
+    const body = req.body as Record<string, unknown>;
+    const reqId = typeof body.req === 'string' ? body.req : '';
     const user = res.locals.user as User;
     if (body.decision === 'approve') {
-      let url: string;
-      try {
-        url = deps.provider.approve(reqId, user.id);
-      } catch {
-        return expired(res);
-      }
+      const url = deps.provider.approve(reqId, user.id);
+      if (!url) return expired(res);
       return res.redirect(url);
     }
     const url = deps.provider.deny(reqId);

@@ -66,9 +66,9 @@ export class SqliteOAuthProvider implements OAuthServerProvider {
     return { pending, clientName: client?.client_name ?? 'An AI application' };
   }
 
-  approve(pendingId: string, userId: number): string {
+  approve(pendingId: string, userId: number): string | null {
     const described = this.describePending(pendingId);
-    if (!described) throw new Error('Authorization request expired');
+    if (!described) return null;
     const { pending } = described;
     deletePending(this.db, pendingId);
     const code = randomToken();

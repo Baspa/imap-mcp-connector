@@ -33,6 +33,12 @@ const requestId: RequestHandler = (_req, res, next) => {
   next();
 };
 
+const noFraming: RequestHandler = (_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  next();
+};
+
 function clientErrorStatus(err: unknown): number | undefined {
   const e = err as { status?: unknown; statusCode?: unknown } | null;
   for (const value of [e?.status, e?.statusCode]) {
@@ -66,6 +72,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.set('views', VIEWS_DIR);
 
   app.use(requestId);
+  app.use(noFraming);
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });
   });

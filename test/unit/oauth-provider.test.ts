@@ -33,7 +33,7 @@ async function authorize(provider: SqliteOAuthProvider, client: OAuthClientInfor
 
 async function codeFor(provider: SqliteOAuthProvider, client: OAuthClientInformationFull, userId: number): Promise<string> {
   const id = await authorize(provider, client);
-  const url = new URL(provider.approve(id, userId));
+  const url = new URL(provider.approve(id, userId)!);
   expect(url.searchParams.get('state')).toBe('st');
   return url.searchParams.get('code')!;
 }
@@ -60,7 +60,7 @@ describe('SqliteOAuthProvider', () => {
     const id = await authorize(provider, client);
     advance(11 * 60_000);
     expect(provider.describePending(id)).toBeNull();
-    expect(() => provider.approve(id, user.id)).toThrow();
+    expect(provider.approve(id, user.id)).toBeNull();
   });
 
   it('issues tokens for a valid code once', async () => {

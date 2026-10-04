@@ -130,4 +130,81 @@ describe('OAuth flow', () => {
     expect(res.status).toBe(400);
     expect(res.text).toContain('expired');
   });
+
+  describe('consent page security', () => {
+    async function pendingConsent() {
+      const { app, deps } = testApp();
+      const agent = request.agent(app);
+      const reg = await agent.post('/register').send({ redirect_uris: [REDIRECT], client_name: 'Test AI', token_endpoint_auth_method: 'none' });
+      const { code_challenge } = await pkceChallenge();
+      const authorize = await agent.get('/authorize').query({
+        response_type: 'code', client_id: reg.body.client_id, redirect_uri: REDIRECT, code_challenge, code_challenge_method: 'S256', state: 's1',
+      });
+      const consentUrl: string = authorize.headers.location;
+      const reqId = new URL(consentUrl, 'http://x').searchParams.get('req')!;
+      return { app, deps, agent, consentUrl, reqId };
+    }
+
+    async function signedInConsent() {
+      const ctx = await pendingConsent();
+      const loginPage = await ctx.agent.get(`/login?next=${encodeURIComponent(ctx.consentUrl)}`);
+      await ctx.agent.post('/login').type('form').send({ _csrf: csrfFrom(loginPage.text), email: 'alice@x.org', password: 'right', next: ctx.consentUrl });
+      const consent = await ctx.agent.get(ctx.consentUrl);
+      return { ...ctx, consent, csrf: csrfFrom(consent.text) };
+    }
+
+    it('forbids framing and caching of the consent page', async () => {
+      const { consent } = await signedInConsent();
+      expect(consent.status).toBe(200);
+      expect(consent.headers['x-frame-options']).toBe('DENY');
+      expect(consent.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+      expect(consent.headers['cache-control']).toBe('no-store');
+    });
+
+    it('forbids framing of the login page', async () => {
+      const { app } = testApp();
+      const res = await request(app).get('/login');
+      expect(res.headers['x-frame-options']).toBe('DENY');
+      expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    });
+
+    it('rejects a missing or wrong CSRF token', async () => {
+      const { agent, reqId } = await signedInConsent();
+      const missing = await agent.post('/consent').type('form').send({ req: reqId, decision: 'approve' });
+      expect(missing.status).toBe(403);
+      const wrong = await agent.post('/consent').type('form').send({ _csrf: 'nope', req: reqId, decision: 'approve' });
+      expect(wrong.status).toBe(403);
+    });
+
+    it('redirects a signed-out POST to the login page', async () => {
+      const { agent, reqId } = await pendingConsent();
+      const res = await agent.post('/consent').type('form').send({ req: reqId, decision: 'approve' });
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toMatch(/^\/login/);
+    });
+
+    it('treats a replayed approval as expired', async () => {
+      const { agent, reqId, csrf } = await signedInConsent();
+      const first = await agent.post('/consent').type('form').send({ _csrf: csrf, req: reqId, decision: 'approve' });
+      expect(first.status).toBe(302);
+      const replay = await agent.post('/consent').type('form').send({ _csrf: csrf, req: reqId, decision: 'approve' });
+      expect(replay.status).toBe(400);
+      expect(replay.text).toContain('expired');
+    });
+
+    it('rejects an unknown request id for approve and deny', async () => {
+      const { agent, csrf } = await signedInConsent();
+      for (const decision of ['approve', 'deny']) {
+        const res = await agent.post('/consent').type('form').send({ _csrf: csrf, req: 'does-not-exist', decision });
+        expect(res.status).toBe(400);
+        expect(res.text).toContain('expired');
+      }
+    });
+
+    it('does not crash on a repeated req field', async () => {
+      const { agent, csrf, reqId } = await signedInConsent();
+      const res = await agent.post('/consent').type('form').send(`_csrf=${csrf}&req=${reqId}&req=${reqId}&decision=approve`);
+      expect(res.status).toBe(400);
+    });
+  });
 });
