@@ -141,7 +141,7 @@ Messages are addressed by `folder` + IMAP `uid`. Each level includes everything 
 
 | Tool | Input | Effect |
 |---|---|---|
-| `send_email` | Same as `create_draft` | Sends via SMTP; appends copy to Sent (skipped for providers that auto-save, e.g. Gmail). Counts against send limit. |
+| `send_email` | Same as `create_draft` | Sends via SMTP; appends copy to Sent unless the user's provider preset has `autoSavesSent: true` (Gmail, Outlook-family); unknown providers always get the copy appended. Counts against send limit. |
 | `delete_messages` | `folder`, `uids[]` | Moves to Trash. Never expunges. |
 
 ### Safety rules
