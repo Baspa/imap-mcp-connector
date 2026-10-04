@@ -153,4 +153,60 @@ describe('web', () => {
     expect(findUserByEmail(deps.db, 'alice@x.org')).toBeUndefined();
     expect((await agent.get('/settings')).status).toBe(302);
   });
+
+  it('ends every session of a deleted account and never reuses its id', async () => {
+    const { app, deps } = testApp();
+    const a = request.agent(app);
+    const b = request.agent(app);
+    await signIn(a);
+    await signIn(b);
+    const user = findUserByEmail(deps.db, 'alice@x.org')!;
+    const csrf = csrfFrom((await a.get('/settings')).text);
+    await a.post('/settings/delete').type('form').send({ _csrf: csrf });
+    const rows = deps.db.prepare("SELECT sid FROM sessions WHERE json_extract(data, '$.userId') = ?").all(user.id);
+    expect(rows).toEqual([]);
+    const c = request.agent(app);
+    await signIn(c, 'mallory@x.org');
+    expect(findUserByEmail(deps.db, 'mallory@x.org')!.id).not.toBe(user.id);
+    const res = await b.get('/settings');
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/login?next=%2Fsettings');
+  });
+
+  it.each(['/logout', '/settings/permission', '/settings/smtp', '/settings/revoke', '/settings/delete'])(
+    'rejects POST %s without a valid CSRF token',
+    async (path) => {
+      const { app, deps } = testApp();
+      const agent = request.agent(app);
+      await signIn(agent);
+      await agent.get('/settings');
+      const missing = await agent.post(path).type('form').send({ level: 'full' });
+      expect(missing.status).toBe(403);
+      const wrong = await agent.post(path).type('form').send({ _csrf: 'wrong', level: 'full' });
+      expect(wrong.status).toBe(403);
+      expect(findUserByEmail(deps.db, 'alice@x.org')).toBeDefined();
+    },
+  );
+
+  it('answers 413 for an oversized form body', async () => {
+    const { app } = testApp();
+    const agent = request.agent(app);
+    const page = await agent.get('/login');
+    const res = await agent
+      .post('/login')
+      .type('form')
+      .send({ _csrf: csrfFrom(page.text), email: 'a@x.org', password: 'x'.repeat(200_000) });
+    expect(res.status).toBe(413);
+  });
+
+  it('still signs in when closing the cached mail connection fails', async () => {
+    const close = vi.fn(async () => { throw new Error('imap down'); });
+    const { app } = testApp({ pool: { close } as unknown as MailPool });
+    const agent = request.agent(app);
+    const res = await signIn(agent);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe('/settings?welcome=1');
+    expect(close).toHaveBeenCalled();
+    expect((await agent.get('/settings')).status).toBe(200);
+  });
 });

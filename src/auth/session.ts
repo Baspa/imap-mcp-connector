@@ -64,3 +64,7 @@ export class SqliteSessionStore extends session.Store {
     }
   }
 }
+
+export function deleteSessionsForUser(db: Db, userId: number): void {
+  db.prepare("DELETE FROM sessions WHERE json_extract(data, '$.userId') = ?").run(userId);
+}

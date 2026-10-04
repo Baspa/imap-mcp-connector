@@ -31,6 +31,14 @@ const requestId: RequestHandler = (_req, res, next) => {
   next();
 };
 
+function clientErrorStatus(err: unknown): number | undefined {
+  const e = err as { status?: unknown; statusCode?: unknown } | null;
+  for (const value of [e?.status, e?.statusCode]) {
+    if (typeof value === 'number' && value >= 400 && value <= 499) return value;
+  }
+  return undefined;
+}
+
 // Express recognises error handlers by their four-argument arity, so `_next` must stay.
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
@@ -40,6 +48,11 @@ const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     error: err instanceof Error ? err.message : String(err),
   });
   if (res.headersSent) return;
+  const status = clientErrorStatus(err);
+  if (status) {
+    res.status(status).render('error', { title: 'Request rejected', message: 'The request could not be processed.' });
+    return;
+  }
   res.status(500).render('error', { title: 'Something went wrong', message: `Request id: ${res.locals.requestId}` });
 };
 

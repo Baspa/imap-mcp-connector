@@ -1,7 +1,7 @@
 export const migrations: string[] = [
   `
   CREATE TABLE users (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
     imap_host TEXT NOT NULL,
     imap_port INTEGER NOT NULL,

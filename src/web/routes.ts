@@ -1,11 +1,13 @@
 import { Router, type Request, type Response } from 'express';
 import type { AppDeps } from '../app.js';
 import { login, type LoginDeps } from '../auth/login.js';
+import { deleteSessionsForUser } from '../auth/session.js';
 import { mcpUrl } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
 import { GuardError } from '../guard.js';
+import { log } from '../log.js';
 import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
 import { LEVELS } from './levels.js';
@@ -100,7 +102,14 @@ export function webRouter(deps: AppDeps): Router {
     }
     const fallback = result.isNew ? '/settings?welcome=1' : '/settings';
     const next = safeNext(body.next, fallback);
-    await deps.pool.close(result.user.id);
+    try {
+      await deps.pool.close(result.user.id);
+    } catch (err) {
+      log('warn', 'closing cached mail connection failed', {
+        userId: result.user.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     await new Promise<void>((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
     req.session.userId = result.user.id;
     res.redirect(next);
@@ -153,6 +162,7 @@ export function webRouter(deps: AppDeps): Router {
     const user = res.locals.user as User;
     await deps.pool.close(user.id);
     deleteUser(deps.db, user.id);
+    deleteSessionsForUser(deps.db, user.id);
     req.session.destroy((err) => (err ? next(err) : res.redirect('/login?deleted=1')));
   });
 

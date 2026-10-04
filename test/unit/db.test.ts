@@ -71,6 +71,14 @@ describe('users', () => {
     expect(findUserById(db, u.id)).toBeUndefined();
     expect(getToken(db, 'h1')).toBeUndefined();
   });
+
+  it('never reuses the id of a deleted user', () => {
+    const db = testDb();
+    const u = createTestUser(db);
+    deleteUser(db, u.id);
+    const next = createTestUser(db);
+    expect(next.id).not.toBe(u.id);
+  });
 });
 
 describe('oauth', () => {
