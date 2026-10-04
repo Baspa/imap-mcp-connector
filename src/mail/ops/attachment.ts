@@ -65,16 +65,18 @@ export async function getAttachment(
     const kind = textKind(info.contentType, info.filename);
     if (!kind) return { ...base, text: null, truncated: false, note: 'Binary attachment; content not extracted.' };
 
-    const buf = await downloadPart(client, uid, partId, MAX_ATTACHMENT_BYTES);
+    const { data, charset } = await downloadPart(client, uid, partId, MAX_ATTACHMENT_BYTES);
     let raw: string;
     if (kind === 'pdf') {
       try {
-        raw = await pdfText(buf);
+        raw = await pdfText(data);
       } catch {
         return { ...base, text: null, truncated: false, note: 'PDF could not be read (corrupt or password-protected).' };
       }
     } else {
-      const decoded = decodeText(buf, info.charset);
+      // Use the charset imapflow reports for the downloaded bytes, not the declared one: imapflow has already
+      // converted inline text parts to UTF-8 (and then reports 'utf-8'); attachments keep their declared charset.
+      const decoded = decodeText(data, charset);
       raw = kind === 'html' ? htmlToText(decoded) : decoded;
     }
     const { text, truncated } = truncateUtf8(raw);

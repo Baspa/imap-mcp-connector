@@ -88,7 +88,7 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 
 - **Plain-http `PUBLIC_URL`:** it works only for `localhost` / `127.0.0.1`, even with `NODE_ENV=development`. The MCP SDK rejects any other non-https issuer URL.
 - **Run behind exactly one reverse proxy:** the app sets Express `trust proxy` to 1, as in the provided compose file with Caddy. If you expose the app directly without a proxy, clients can spoof `X-Forwarded-For` and weaken the per-IP sign-in rate limit.
-- **Folder roles on servers without SPECIAL-USE:** if a mail server does not support IMAP SPECIAL-USE and uses non-English folder names (for example "Gesendet"), roles such as `sent` or `trash` may not resolve. Pass the exact folder path returned by `list_folders` instead.
+- **Folder roles on servers without SPECIAL-USE:** roles such as `sent` or `trash` are resolved from the server's SPECIAL-USE flags, then from common English top-level folder names, then from localized top-level names (for example "Gesendet" or "Papierkorb"). If a role still does not resolve, tools that take a folder accept the exact folder path returned by `list_folders`; `create_draft`, saving to Sent after `send_email`, and `delete_messages` need the Drafts, Sent and Trash roles to resolve.
 
 ## Development
 

@@ -193,4 +193,38 @@ describe('getAttachment', () => {
     const r = await getAttachment(client, 'INBOX', uid, m.attachments[0].partId);
     expect(r.text).toBe('Grüße');
   });
+
+  it('does not decode inline text parts twice (imapflow already converted them to UTF-8)', async () => {
+    const raw = Buffer.from(
+      [
+        'From: sender@example.com',
+        'To: me@test.local',
+        'Subject: InlineLatin',
+        'Date: Mon, 1 Sep 2025 10:00:00 +0000',
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/mixed; boundary="b1"',
+        '',
+        '--b1',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'body',
+        '--b1',
+        'Content-Type: text/plain; charset=iso-8859-1; name="gruss.txt"',
+        'Content-Disposition: inline; filename="gruss.txt"',
+        'Content-Transfer-Encoding: quoted-printable',
+        '',
+        'Gr=FC=DFe',
+        '--b1--',
+        '',
+      ].join('\r\n'),
+      'latin1',
+    );
+    await appendRaw(client, 'INBOX', raw);
+    const uid = await findUid(client, 'INBOX', 'InlineLatin');
+    const m = await getMessage(client, 'INBOX', uid);
+    const part = m.attachments.find((a) => a.filename === 'gruss.txt');
+    expect(part).toBeDefined();
+    const r = await getAttachment(client, 'INBOX', uid, part!.partId);
+    expect(r.text).toBe('Grüße');
+  });
 });

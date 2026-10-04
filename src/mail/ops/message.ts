@@ -66,13 +66,19 @@ export function scanStructure(root: MessageStructureObject): StructureScan {
   return scan;
 }
 
-export async function downloadPart(client: ImapFlow, uid: number, part: string, maxBytes: number): Promise<Buffer> {
-  const { content } = await client.download(String(uid), part, { uid: true, maxBytes });
+export interface DownloadedPart {
+  data: Buffer;
+  /** Charset of `data`: imapflow converts inline text parts to UTF-8 and reports 'utf-8' for them. */
+  charset?: string;
+}
+
+export async function downloadPart(client: ImapFlow, uid: number, part: string, maxBytes: number): Promise<DownloadedPart> {
+  const { meta, content } = await client.download(String(uid), part, { uid: true, maxBytes });
   // imapflow resolves without content when the message or part is gone/empty.
-  if (!content) return Buffer.alloc(0);
+  if (!content) return { data: Buffer.alloc(0) };
   const chunks: Buffer[] = [];
   for await (const chunk of content) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks);
+  return { data: Buffer.concat(chunks), ...(meta?.charset ? { charset: meta.charset } : {}) };
 }
 
 /** Reads one message; the folder must already be selected (caller holds the mailbox lock). */
@@ -81,8 +87,8 @@ export async function readMessage(client: ImapFlow, folder: string, uid: number)
   if (!msg || !msg.bodyStructure) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
   const scan = scanStructure(msg.bodyStructure);
   let body = '';
-  if (scan.text) body = (await downloadPart(client, uid, scan.text.part ?? '1', 1_000_000)).toString('utf8');
-  else if (scan.html) body = htmlToText((await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).toString('utf8'));
+  if (scan.text) body = (await downloadPart(client, uid, scan.text.part ?? '1', 1_000_000)).data.toString('utf8');
+  else if (scan.html) body = htmlToText((await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).data.toString('utf8'));
   const truncated = truncateUtf8(body);
   return {
     folder,

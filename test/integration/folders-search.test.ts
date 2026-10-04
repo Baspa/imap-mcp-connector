@@ -49,6 +49,29 @@ describe('folder resolution edge cases', () => {
   });
 });
 
+describe('localized folder names without SPECIAL-USE', () => {
+  it('resolves a role from a localized top-level name, never from a nested one', async () => {
+    const { email, password } = await createMailUser();
+    const fresh = await connectImap(email, password);
+    try {
+      await createFolders(fresh, ['Drafts', 'Trash', 'Projekte']);
+      const delimiter = (await fresh.list()).find((f) => f.path === 'INBOX')?.delimiter ?? '/';
+      await fresh.mailboxCreate(`Projekte${delimiter}Gesendet`);
+      // imapflow name-guesses the nested folder as \Sent; it must not become the Sent role.
+      expect((await fresh.list()).find((f) => f.specialUse === '\\Sent')).toMatchObject({
+        path: `Projekte${delimiter}Gesendet`, specialUseSource: 'name',
+      });
+      await expect(resolveRole(fresh, 'sent')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+
+      await fresh.mailboxCreate('Gesendet');
+      expect((await fresh.list()).find((f) => f.specialUse === '\\Sent')).toMatchObject({ path: 'Gesendet', specialUseSource: 'name' });
+      expect(await resolveRole(fresh, 'sent')).toBe('Gesendet');
+    } finally {
+      await fresh.logout();
+    }
+  });
+});
+
 describe('searchMessages', () => {
   it('filters by subject, sender and unread, newest first, with snippets', async () => {
     await appendMessage(client, 'INBOX', { subject: 'Invoice March', from: 'billing@shop.com', text: 'Your invoice total is 10 EUR' });

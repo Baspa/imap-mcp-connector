@@ -53,12 +53,18 @@ export async function listFolders(client: ImapFlow): Promise<FolderInfo[]> {
 
 export async function resolveRole(client: ImapFlow, role: FolderRole): Promise<string> {
   const folders = (await client.list()).filter((f) => !f.flags.has('\\Noselect'));
-  // imapflow also guesses specialUse from folder names (source 'name'); those are handled by the top-level name fallback below.
+  // 1. Special-use reported by the server.
   const bySpecialUse = folders.find((f) => roleOf(f) === role && f.specialUseSource !== 'name');
   if (bySpecialUse) return bySpecialUse.path;
+  // 2. Common English top-level names.
   const names = NAME_FALLBACK[role];
   const byName = folders.find((f) => names.includes(f.path.toLowerCase()));
   if (byName) return byName.path;
+  // 3. imapflow's guess from localized names ("Gesendet"), trusted only for top-level folders:
+  //    it also guesses nested folders such as "Projects/Sent", which are ordinary folders.
+  const isTopLevel = (f: ListResponse) => !f.delimiter || !f.path.includes(f.delimiter);
+  const byGuessedName = folders.find((f) => roleOf(f) === role && f.specialUseSource === 'name' && isTopLevel(f));
+  if (byGuessedName) return byGuessedName.path;
   throw new MailError('NOT_FOUND', `This mailbox has no ${role} folder.`);
 }
 
