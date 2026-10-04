@@ -1,0 +1,75 @@
+import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
+import session from 'express-session';
+import type { LoginDeps } from './auth/login.js';
+import type { SqliteOAuthProvider } from './auth/oauth-provider.js';
+import { SqliteSessionStore } from './auth/session.js';
+import type { Config } from './config.js';
+import type { Db } from './db/index.js';
+import { log } from './log.js';
+import type { MailPool } from './mail/pool.js';
+import type { SmtpFactory } from './mail/smtp.js';
+import { webRouter } from './web/routes.js';
+
+export interface AppDeps {
+  config: Config;
+  db: Db;
+  pool: MailPool;
+  provider: SqliteOAuthProvider;
+  smtpFactory: SmtpFactory;
+  discover: LoginDeps['discover'];
+  verifyImap: LoginDeps['verifyImap'];
+  guard: LoginDeps['guard'];
+}
+
+const VIEWS_DIR = fileURLToPath(new URL('../views', import.meta.url));
+
+const requestId: RequestHandler = (_req, res, next) => {
+  res.locals.requestId = randomUUID();
+  res.setHeader('X-Request-Id', res.locals.requestId);
+  next();
+};
+
+// Express recognises error handlers by their four-argument arity, so `_next` must stay.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+  log('error', 'request failed', {
+    requestId: res.locals.requestId,
+    path: req.path,
+    error: err instanceof Error ? err.message : String(err),
+  });
+  if (res.headersSent) return;
+  res.status(500).render('error', { title: 'Something went wrong', message: `Request id: ${res.locals.requestId}` });
+};
+
+export function createApp(deps: AppDeps): express.Express {
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  app.set('view engine', 'ejs');
+  app.set('views', VIEWS_DIR);
+
+  app.use(requestId);
+  app.get('/healthz', (_req, res) => {
+    res.json({ ok: true });
+  });
+
+  app.use(
+    session({
+      store: new SqliteSessionStore(deps.db),
+      secret: deps.config.sessionSecret,
+      name: 'imc.sid',
+      resave: false,
+      saveUninitialized: false,
+      cookie: { httpOnly: true, secure: deps.config.isProduction, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 },
+    }),
+  );
+  app.use(express.urlencoded({ extended: false, limit: '100kb' }));
+  app.use(webRouter(deps));
+  app.use((_req, res) => {
+    res.status(404).render('error', { title: 'Not found', message: 'This page does not exist.' });
+  });
+  app.use(errorHandler);
+  return app;
+}

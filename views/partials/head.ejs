@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title><%= title %> · IMAP Connector</title>
+<style>
+  :root { color-scheme: light dark; --fg:#1d1d1f; --bg:#f6f6f7; --card:#fff; --muted:#5f6368; --accent:#2b59c3; --danger:#b42318; --ok:#1a7f37; --border:#dcdcde; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#ececec; --bg:#141414; --card:#1e1e1e; --muted:#a8a8a8; --accent:#7aa2ff; --danger:#ff7b72; --ok:#56d364; --border:#333; } }
+  body { font: 16px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; color: var(--fg); background: var(--bg); margin: 0; padding: 16px; }
+  main { max-width: 640px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 16px 0; }
+  label { display: block; margin: 12px 0 4px; font-weight: 600; }
+  input, select { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  input[type=radio], input[type=checkbox] { width: auto; margin-right: 8px; }
+  .option { display: flex; align-items: flex-start; gap: 4px; margin: 10px 0; font-weight: normal; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; margin-top: 12px; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button.danger { background: var(--danger); border-color: var(--danger); }
+  .error { color: var(--danger); } .ok { color: var(--ok); } .muted { color: var(--muted); font-size: 14px; }
+  .banner { border-left: 4px solid var(--danger); padding: 8px 12px; background: var(--card); }
+  code { word-break: break-all; background: var(--bg); padding: 2px 6px; border-radius: 4px; }
+  ul.grants { list-style: none; padding: 0; } ul.grants li { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding: 8px 0; }
+  .row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
+  @media (max-width: 480px) { .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body><main>

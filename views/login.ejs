@@ -1,0 +1,42 @@
+<%- include('partials/head', { title }) %>
+<h1>Connect your mailbox to AI</h1>
+<p class="muted">Sign in with your email address and mail password. Your first sign-in creates your account on this server.</p>
+<% if (deleted) { %><p class="ok">Your account and stored credentials were deleted.</p><% } %>
+<% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+<form method="post" action="/login" class="card">
+  <input type="hidden" name="_csrf" value="<%= csrf %>">
+  <input type="hidden" name="next" value="<%= next %>">
+  <label for="email">Email</label>
+  <input id="email" name="email" type="email" autocomplete="username" required value="<%= email %>">
+  <label for="password">Password or app password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+  <% if (needsSettings) { %>
+    <h2>Mail server settings</h2>
+    <label for="imap_host">IMAP server</label>
+    <div class="row">
+      <input id="imap_host" name="imap_host" placeholder="imap.example.com" required value="<%= manual.imap_host || '' %>">
+      <input name="imap_port" type="number" aria-label="IMAP port" required value="<%= manual.imap_port || '993' %>">
+      <select name="imap_security" aria-label="IMAP security">
+        <% ['tls', 'starttls', 'none'].forEach(function (s) { %><option value="<%= s %>" <%= (manual.imap_security || 'tls') === s ? 'selected' : '' %>><%= s.toUpperCase() %></option><% }) %>
+      </select>
+    </div>
+    <label for="smtp_host">SMTP server</label>
+    <div class="row">
+      <input id="smtp_host" name="smtp_host" placeholder="smtp.example.com" required value="<%= manual.smtp_host || '' %>">
+      <input name="smtp_port" type="number" aria-label="SMTP port" required value="<%= manual.smtp_port || '465' %>">
+      <select name="smtp_security" aria-label="SMTP security">
+        <% ['tls', 'starttls', 'none'].forEach(function (s) { %><option value="<%= s %>" <%= (manual.smtp_security || 'tls') === s ? 'selected' : '' %>><%= s.toUpperCase() %></option><% }) %>
+      </select>
+    </div>
+  <% } %>
+  <button type="submit">Sign in</button>
+</form>
+<div class="card muted">
+  <p><strong>Gmail, iCloud, Yahoo and others need an app password</strong> instead of your normal password:
+    <a href="https://myaccount.google.com/apppasswords">Gmail</a> ·
+    <a href="https://support.apple.com/en-us/102654">iCloud</a> ·
+    <a href="https://help.yahoo.com/kb/SLN15241.html">Yahoo</a>.
+    Lost it? Create a new one and sign in with it.</p>
+  <p>Outlook.com and Microsoft 365 are not supported yet.</p>
+</div>
+<%- include('partials/foot') %>

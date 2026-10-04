@@ -1,0 +1,74 @@
+<%- include('partials/head', { title }) %>
+<header>
+  <h1>Settings</h1>
+  <form method="post" action="/logout"><input type="hidden" name="_csrf" value="<%= csrf %>"><button class="secondary">Sign out</button></form>
+</header>
+<p class="muted">Signed in as <strong><%= user.email %></strong></p>
+<% if (user.needsReauth) { %><p class="banner" role="alert">Your mail password stopped working. <a href="/login">Sign in again</a> with your current password or app password.</p><% } %>
+<% if (welcome) { %><p class="ok">Your account is ready. Connect it to Claude or ChatGPT below.</p><% } %>
+<% if (saved) { %><p class="ok">Saved.</p><% } %>
+<% if (error) { %><p class="error" role="alert"><%= error %></p><% } %>
+
+<section class="card">
+  <h2>Connect an AI</h2>
+  <p>Connector URL: <code><%= connectorUrl %></code></p>
+  <p><strong>Claude:</strong> Settings → Connectors → Add custom connector → paste the URL → Connect.</p>
+  <p><strong>ChatGPT:</strong> Settings → Connectors (enable developer mode if needed) → Create → paste the URL → choose OAuth.</p>
+  <p class="muted">You will be asked to approve access on this server.</p>
+</section>
+
+<section class="card">
+  <h2>What can the AI do?</h2>
+  <form method="post" action="/settings/permission">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <% levels.forEach(function (l) { %>
+      <label class="option"><input type="radio" name="level" value="<%= l.value %>" <%= user.permissionLevel === l.value ? 'checked' : '' %>>
+        <span><strong><%= l.label %></strong><br><span class="muted"><%= l.description %></span></span></label>
+    <% }) %>
+    <button type="submit">Save</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Connected apps</h2>
+  <% if (grants.length === 0) { %><p class="muted">No AI apps connected yet.</p><% } else { %>
+    <ul class="grants">
+      <% grants.forEach(function (g) { %>
+        <li><span><strong><%= g.clientName || 'Unnamed app' %></strong><br><span class="muted">Connected <%= new Date(g.connectedAt).toISOString().slice(0, 10) %><%= g.lastUsedAt ? ' · last used ' + new Date(g.lastUsedAt).toISOString().slice(0, 10) : '' %></span></span>
+          <form method="post" action="/settings/revoke"><input type="hidden" name="_csrf" value="<%= csrf %>"><input type="hidden" name="grant_id" value="<%= g.grantId %>"><button class="secondary">Revoke</button></form></li>
+      <% }) %>
+    </ul>
+  <% } %>
+</section>
+
+<section class="card">
+  <h2>Sending (SMTP)</h2>
+  <p class="muted">IMAP: <%= user.imapHost %>:<%= user.imapPort %> (<%= user.imapSecurity %>)</p>
+  <form method="post" action="/settings/smtp">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <label for="smtp_host">SMTP server</label>
+    <div class="row">
+      <input id="smtp_host" name="smtp_host" required value="<%= user.smtpHost %>">
+      <input name="smtp_port" type="number" aria-label="SMTP port" required value="<%= user.smtpPort %>">
+      <select name="smtp_security" aria-label="SMTP security">
+        <% ['tls', 'starttls', 'none'].forEach(function (s) { %><option value="<%= s %>" <%= user.smtpSecurity === s ? 'selected' : '' %>><%= s.toUpperCase() %></option><% }) %>
+      </select>
+    </div>
+    <label for="smtp_username">SMTP username</label>
+    <input id="smtp_username" name="smtp_username" required value="<%= user.smtpUsername %>">
+    <label for="smtp_password">SMTP password (leave empty to keep the current one)</label>
+    <input id="smtp_password" name="smtp_password" type="password" autocomplete="new-password">
+    <label class="option"><input type="checkbox" name="use_imap_password" <%= user.smtpPasswordEnc ? '' : 'checked' %>> Use my mail (IMAP) password for SMTP</label>
+    <button type="submit">Save SMTP settings</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Delete account</h2>
+  <p class="muted">Removes your stored credentials and disconnects every AI app. Your mailbox is not touched.</p>
+  <form method="post" action="/settings/delete" onsubmit="return confirm('Delete your account and stored credentials?')">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <button class="danger">Delete my account</button>
+  </form>
+</section>
+<%- include('partials/foot') %>
