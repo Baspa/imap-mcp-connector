@@ -89,6 +89,19 @@ describe('login', () => {
     expect(r.status === 'ok' && r.user.imapHost).toBe('mail.custom.org');
   });
 
+  it('manual settings are ignored when discovery succeeds', async () => {
+    const discovered = { ...settings, imapHost: 'imap.example.com', smtpHost: 'smtp.example.com' };
+    const d = deps({ discover: vi.fn(async () => discovered) });
+    const manual = { ...settings, imapHost: 'imap.attacker.net', smtpHost: 'smtp.attacker.net' };
+    const r = await login(d, { ...input, manual });
+    expect(r.status).toBe('ok');
+    if (r.status !== 'ok') return;
+    expect(d.discover).toHaveBeenCalledWith('alice@x.org');
+    expect(d.verifyImap).toHaveBeenCalledWith(expect.objectContaining({ imapHost: 'imap.example.com' }), 'right');
+    expect(d.guard).toHaveBeenCalledWith('alice@x.org', discovered);
+    expect(r.user).toMatchObject({ imapHost: 'imap.example.com', smtpHost: 'smtp.example.com' });
+  });
+
   it('returns guard errors to the user', async () => {
     const d = deps({ guard: vi.fn(async () => { throw new GuardError('This mail server is not allowed on this instance.'); }) });
     expect(await login(d, input)).toEqual({ status: 'error', message: 'This mail server is not allowed on this instance.' });

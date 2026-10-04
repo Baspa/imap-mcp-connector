@@ -11,14 +11,18 @@ export type LookupAll = (host: string) => Promise<{ address: string }[]>;
 
 const defaultLookup: LookupAll = (host) => dns.lookup(host, { all: true });
 
-export function isEmailOrHostAllowed(config: Config, email: string, imapHost: string): boolean {
+/**
+ * Both allowlists must pass: a set ALLOWED_EMAIL_DOMAINS restricts who may sign in, and a set
+ * ALLOWED_IMAP_HOSTS (other than "*") restricts which servers they may use. An empty list does not restrict.
+ */
+export function isAllowed(config: Config, email: string, imapHost: string): boolean {
   const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
   const host = imapHost.toLowerCase();
-  return (
-    config.allowedEmailDomains.includes(domain) ||
-    config.allowedImapHosts.includes('*') ||
-    config.allowedImapHosts.includes(host)
-  );
+  const domains = config.allowedEmailDomains;
+  const hosts = config.allowedImapHosts;
+  const domainOk = domains.length === 0 || domains.includes(domain);
+  const hostOk = hosts.length === 0 || hosts.includes('*') || hosts.includes(host);
+  return domainOk && hostOk;
 }
 
 export function isPublicAddress(addr: string): boolean {
@@ -52,7 +56,7 @@ export async function guardMailSettings(
   settings: MailServerSettings,
   lookup: LookupAll = defaultLookup,
 ): Promise<void> {
-  if (!isEmailOrHostAllowed(config, email, settings.imapHost)) {
+  if (!isAllowed(config, email, settings.imapHost)) {
     throw new GuardError('This mail server is not allowed on this instance. Ask the administrator.');
   }
   if (config.allowPrivateHosts) return;

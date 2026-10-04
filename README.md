@@ -52,12 +52,16 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `PUBLIC_URL` | yes | External origin, `https://` only (no path). |
 | `ENCRYPTION_KEY` | yes | 32 random bytes, base64. Encrypts stored mail passwords. **Back it up**: if it is lost, users must sign in again. |
 | `SESSION_SECRET` | yes | ≥ 32 characters, signs session cookies. |
-| `ALLOWED_EMAIL_DOMAINS` | one of these | Comma-separated email domains allowed to sign in. |
-| `ALLOWED_IMAP_HOSTS` | one of these | Comma-separated IMAP hosts allowed; `*` allows any public server. |
+| `ALLOWED_EMAIL_DOMAINS` | at least one of these | Comma-separated email domains allowed to sign in. |
+| `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server. |
 | `ALLOW_PRIVATE_HOSTS` | no (`false`) | Allow mail servers on private networks and unencrypted connections. |
 | `DEFAULT_SEND_LIMIT_PER_HOUR` | no (`20`) | Emails each user's AI may send per hour. |
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |
 | `PORT` | no (`3000`) | Listen port. |
+
+When both allowlists are set, a sign-in must pass **both**: the email domain must be in `ALLOWED_EMAIL_DOMAINS` **and** the IMAP host must be in `ALLOWED_IMAP_HOSTS` (unless it is `*`). A list that is not set does not restrict, so `ALLOWED_EMAIL_DOMAINS` alone allows any public mail server for those domains. The check runs at sign-in, when SMTP settings change, and again before each new mail connection.
+
+Server settings are auto-discovered on first sign-in; settings typed into the sign-in form are only used when discovery finds nothing, and the first successful sign-in pins the server for that address. For domains that cannot be auto-discovered, whoever first signs in with working settings decides the server, so with `ALLOWED_IMAP_HOSTS=*` anyone could claim such an address on a server they control. In shared deployments, set `ALLOWED_IMAP_HOSTS` to the servers your users actually use.
 
 To change one user's send limit (run in the deployment directory):
 ```bash

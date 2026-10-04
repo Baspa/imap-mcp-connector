@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { GuardError, guardMailSettings, isEmailOrHostAllowed, isPublicAddress } from '../../src/guard.js';
+import { GuardError, guardMailSettings, isAllowed, isPublicAddress } from '../../src/guard.js';
 import type { MailServerSettings } from '../../src/types.js';
 import { testConfig } from '../helpers/config.js';
 
@@ -9,15 +9,35 @@ const settings: MailServerSettings = {
 };
 const publicLookup = async () => [{ address: '93.184.216.34' }];
 
-describe('isEmailOrHostAllowed', () => {
-  it('matches domains, hosts, and wildcard', () => {
+describe('isAllowed', () => {
+  it('only domains set: any host for an allowed domain, other domains rejected', () => {
     const byDomain = testConfig({ ALLOWED_IMAP_HOSTS: undefined, ALLOWED_EMAIL_DOMAINS: 'example.com' });
-    expect(isEmailOrHostAllowed(byDomain, 'a@example.com', 'imap.other.net')).toBe(true);
-    expect(isEmailOrHostAllowed(byDomain, 'a@sub.example.com', 'imap.other.net')).toBe(false);
+    expect(isAllowed(byDomain, 'a@example.com', 'imap.other.net')).toBe(true);
+    expect(isAllowed(byDomain, 'a@sub.example.com', 'imap.other.net')).toBe(false);
+    expect(isAllowed(byDomain, 'a@x.org', 'imap.x.org')).toBe(false);
+  });
+
+  it('only hosts set: listed hosts for any domain, case-insensitively', () => {
     const byHost = testConfig({ ALLOWED_IMAP_HOSTS: 'imap.gmail.com' });
-    expect(isEmailOrHostAllowed(byHost, 'a@x.org', 'IMAP.gmail.com')).toBe(true);
-    expect(isEmailOrHostAllowed(byHost, 'a@x.org', 'imap.x.org')).toBe(false);
-    expect(isEmailOrHostAllowed(testConfig(), 'a@x.org', 'anything')).toBe(true);
+    expect(isAllowed(byHost, 'a@x.org', 'IMAP.gmail.com')).toBe(true);
+    expect(isAllowed(byHost, 'a@x.org', 'imap.x.org')).toBe(false);
+  });
+
+  it('only hosts=*: any host for any domain', () => {
+    expect(isAllowed(testConfig(), 'a@x.org', 'anything')).toBe(true);
+  });
+
+  it('both set: the domain AND the host must match', () => {
+    const both = testConfig({ ALLOWED_EMAIL_DOMAINS: 'example.com', ALLOWED_IMAP_HOSTS: 'imap.example.com' });
+    expect(isAllowed(both, 'a@example.com', 'imap.example.com')).toBe(true);
+    expect(isAllowed(both, 'a@example.com', 'imap.attacker.net')).toBe(false);
+    expect(isAllowed(both, 'a@x.org', 'imap.example.com')).toBe(false);
+  });
+
+  it('both set with hosts=*: the domain must match, any host', () => {
+    const c = testConfig({ ALLOWED_EMAIL_DOMAINS: 'example.com', ALLOWED_IMAP_HOSTS: '*' });
+    expect(isAllowed(c, 'a@example.com', 'imap.anything.net')).toBe(true);
+    expect(isAllowed(c, 'a@x.org', 'imap.anything.net')).toBe(false);
   });
 });
 
@@ -50,6 +70,13 @@ describe('guardMailSettings', () => {
   it('rejects hosts not on the allowlist', async () => {
     const c = testConfig({ ALLOWED_IMAP_HOSTS: 'imap.gmail.com' });
     await expect(guardMailSettings(c, 'a@example.com', settings, publicLookup)).rejects.toThrow(/not allowed/);
+  });
+
+  it('rejects an allowed domain whose host is not in ALLOWED_IMAP_HOSTS', async () => {
+    const c = testConfig({ ALLOWED_EMAIL_DOMAINS: 'example.com', ALLOWED_IMAP_HOSTS: 'imap.example.com' });
+    const attacker = { ...settings, imapHost: 'imap.attacker.net' };
+    await expect(guardMailSettings(c, 'a@example.com', attacker, publicLookup)).rejects.toThrow(/not allowed/);
+    await expect(guardMailSettings(c, 'a@example.com', settings, publicLookup)).resolves.toBeUndefined();
   });
 
   it('rejects hosts resolving to private addresses', async () => {

@@ -48,7 +48,9 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const emailKey = `email:${email}`;
 
   const existing = findUserByEmail(deps.db, email);
-  const settings = existing ? serverSettingsOf(existing) : (input.manual ?? (await deps.discover(email)));
+  // Discovered settings always win over user-supplied ones: otherwise anyone could register someone else's
+  // address pinned to their own server and capture the real owner's password at the owner's first sign-in.
+  const settings = existing ? serverSettingsOf(existing) : ((await deps.discover(email)) ?? input.manual ?? null);
   if (!settings) {
     return { status: 'needs_settings', message: "We couldn't detect your mail server settings. Enter them below." };
   }
