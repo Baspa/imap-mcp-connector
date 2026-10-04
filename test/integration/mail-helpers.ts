@@ -100,3 +100,18 @@ export async function findUid(client: ImapFlow, folder: string, subject: string)
     lock.release();
   }
 }
+
+export async function waitForSubject(client: ImapFlow, folder: string, subject: string, timeoutMs = 10_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const lock = await client.getMailboxLock(folder);
+    try {
+      const uids = (await client.search({ subject }, { uid: true })) || [];
+      if (uids.length) return uids[uids.length - 1];
+    } finally {
+      lock.release();
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`Timed out waiting for "${subject}" in ${folder}`);
+}

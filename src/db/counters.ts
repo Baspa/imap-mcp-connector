@@ -1,7 +1,12 @@
 import type { Db } from './index.js';
 
-export function recordSend(db: Db, userId: number, now: number): void {
-  db.prepare('INSERT INTO send_log (user_id, sent_at) VALUES (?, ?)').run(userId, now);
+export function recordSend(db: Db, userId: number, now: number): number {
+  const info = db.prepare('INSERT INTO send_log (user_id, sent_at) VALUES (?, ?)').run(userId, now);
+  return Number(info.lastInsertRowid);
+}
+
+export function deleteSend(db: Db, id: number): void {
+  db.prepare('DELETE FROM send_log WHERE rowid = ?').run(id);
 }
 
 export function sendsSince(db: Db, userId: number, since: number): { count: number; oldest: number | null } {
