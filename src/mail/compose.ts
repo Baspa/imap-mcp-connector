@@ -17,7 +17,24 @@ export interface ComposeInput {
   references?: string;
 }
 
-export function buildMime(input: ComposeInput, opts: { keepBcc: boolean }): Promise<Buffer> {
+function assertNoLineBreaks(input: ComposeInput): void {
+  const fields: [string, string | undefined][] = [
+    ['from', input.from],
+    ...input.to.map((v): [string, string] => ['to', v]),
+    ...input.cc.map((v): [string, string] => ['cc', v]),
+    ...input.bcc.map((v): [string, string] => ['bcc', v]),
+    ['subject', input.subject],
+    ['messageId', input.messageId],
+    ['inReplyTo', input.inReplyTo],
+    ['references', input.references],
+  ];
+  for (const [name, value] of fields) {
+    if (value !== undefined && /[\r\n]/.test(value)) throw new MailError('INVALID_INPUT', `${name} must not contain line breaks.`);
+  }
+}
+
+export async function buildMime(input: ComposeInput, opts: { keepBcc: boolean }): Promise<Buffer> {
+  assertNoLineBreaks(input);
   const node = new MailComposer({
     from: input.from,
     to: input.to,

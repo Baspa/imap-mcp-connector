@@ -57,6 +57,27 @@ describe('actions', () => {
     await expect(moveMessages(client, 'INBOX', many, 'archive')).rejects.toMatchObject({ code: 'INVALID_INPUT' });
   });
 
+  it('reports true counts for missing, mixed and duplicate uids', async () => {
+    const a = await findUid(client, 'INBOX', 'A');
+    await expect(moveMessages(client, 'INBOX', [9998, 9999], 'archive')).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(deleteMessages(client, 'INBOX', [9999])).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(await setFlags(client, 'INBOX', [9999], ['seen'], [])).toEqual({ folder: 'INBOX', updated: 0 });
+    expect(await setFlags(client, 'INBOX', [a, a], ['flagged'], [])).toEqual({ folder: 'INBOX', updated: 1 });
+    expect(await moveMessages(client, 'INBOX', [a, a, 9999], 'archive')).toEqual({ from: 'INBOX', to: 'Archive', moved: 1 });
+    expect(await subjects('INBOX')).toEqual(['B']);
+  });
+
+  it('validates uids and batch size for every action', async () => {
+    const many = Array.from({ length: 101 }, (_, i) => i + 1);
+    await expect(setFlags(client, 'INBOX', many, ['seen'], [])).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(deleteMessages(client, 'INBOX', many)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    for (const bad of [0, 1.5, -3, Number.NaN]) {
+      await expect(setFlags(client, 'INBOX', [bad], ['seen'], [])).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      await expect(moveMessages(client, 'INBOX', [bad], 'archive')).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+      await expect(deleteMessages(client, 'INBOX', [bad])).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    }
+  });
+
   it('appends drafts with the Draft flag', async () => {
     const raw = Buffer.from('From: me@test.local\r\nSubject: Draft one\r\n\r\nbody\r\n');
     const result = await appendToRole(client, 'drafts', raw, ['\\Draft', '\\Seen']);

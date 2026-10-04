@@ -31,4 +31,10 @@ describe('buildMime', () => {
     const bcc = Array.isArray(parsed.bcc) ? parsed.bcc[0] : parsed.bcc;
     expect(bcc?.text).toContain('secret@z.org');
   });
+
+  it('rejects CR or LF in header fields', async () => {
+    await expect(buildMime({ ...input, subject: 'Hi\r\nBcc: evil@z.org' }, { keepBcc: false })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(buildMime({ ...input, to: ['bob@y.org\nBcc: evil@z.org'] }, { keepBcc: false })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+    await expect(buildMime({ ...input, inReplyTo: '<a@b>\r\nX: y' }, { keepBcc: false })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+  });
 });
