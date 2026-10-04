@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import type { ImapFlow } from 'imapflow';
 import { describe, expect, it } from 'vitest';
-import { findUserById, setNeedsReauth } from '../../src/db/users.js';
+import { findUserById, setNeedsReauth, type User } from '../../src/db/users.js';
+import { GuardError } from '../../src/guard.js';
 import { MailError } from '../../src/mail/errors.js';
 import { imapSecurityOptions, verifyImapLogin } from '../../src/mail/imap.js';
 import { MailPool } from '../../src/mail/pool.js';
@@ -32,7 +33,9 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const netError = () => Object.assign(new Error('reset'), { code: 'ECONNRESET' });
 const authError = () => Object.assign(new Error('auth'), { authenticationFailed: true });
 
-function setup(opts: { connectErrors?: (Error | undefined)[]; idleMs?: number; timeoutMs?: number } = {}) {
+function setup(
+  opts: { connectErrors?: (Error | undefined)[]; idleMs?: number; timeoutMs?: number; guard?: (user: User) => Promise<void> } = {},
+) {
   const db = testDb();
   const user = createTestUser(db);
   const clients: FakeClient[] = [];
@@ -43,6 +46,7 @@ function setup(opts: { connectErrors?: (Error | undefined)[]; idleMs?: number; t
     signInUrl: 'https://mail.example.com/login',
     idleMs: opts.idleMs ?? 60_000,
     timeoutMs: opts.timeoutMs ?? 1_000,
+    guard: opts.guard,
     factory: () => {
       const c = new FakeClient(errors.shift());
       clients.push(c);
@@ -142,6 +146,28 @@ describe('MailPool', () => {
     setNeedsReauth(db, user.id, true);
     await expect(pool.withImap(findUserById(db, user.id)!, async () => 1)).rejects.toMatchObject({ code: 'AUTH_FAILED' });
     expect(clients).toHaveLength(0);
+  });
+
+  it('re-checks the guard before opening a new connection', async () => {
+    const guard = async () => {
+      throw new GuardError('This mail server is not allowed on this instance. Ask the administrator.');
+    };
+    const { db, user, pool, clients } = setup({ guard });
+    const err = await pool.withImap(user, async () => 1).catch((e) => e);
+    expect(err).toBeInstanceOf(MailError);
+    expect(err.code).toBe('PERMISSION_DENIED');
+    expect(err.message).toBe('This mail server is not allowed on this instance. Ask the administrator.');
+    expect(clients).toHaveLength(0);
+    expect(findUserById(db, user.id)?.needsReauth).toBe(false);
+  });
+
+  it('does not re-run the guard for a reused connection', async () => {
+    let calls = 0;
+    const { user, pool, clients } = setup({ guard: async () => void calls++ });
+    await pool.withImap(user, async () => 1);
+    await pool.withImap(user, async () => 2);
+    expect(calls).toBe(1);
+    expect(clients).toHaveLength(1);
   });
 
   it('treats an undecryptable password as an auth failure', async () => {

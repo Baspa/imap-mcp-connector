@@ -7,7 +7,7 @@ import { buildMime, loadReplySource, type ComposeInput } from './compose.js';
 import { MailError, toMailError } from './errors.js';
 import { buildReplyHeaders } from './format.js';
 import { appendToRole } from './ops/actions.js';
-import type { MailPool } from './pool.js';
+import { runGuard, type MailPool } from './pool.js';
 import type { SmtpFactory } from './smtp.js';
 
 const HOUR = 60 * 60 * 1000;
@@ -29,6 +29,8 @@ export interface OutgoingDeps {
   smtpFactory: SmtpFactory;
   defaultSendLimitPerHour: number;
   signInUrl: string;
+  /** Re-checks the instance allowlist and network rules before connecting to SMTP; throws GuardError to refuse. */
+  guard?: (user: User) => Promise<void>;
   now?: () => number;
 }
 
@@ -73,6 +75,7 @@ async function deliver(deps: OutgoingDeps, user: User, req: ComposeRequest, now:
   const recipients = [...req.to, ...(req.cc ?? []), ...(req.bcc ?? [])];
   const input = await prepare(deps, user, req, now);
   const wire = await buildMime(input, { keepBcc: false });
+  await runGuard(deps.guard, user);
   const transport = deps.smtpFactory(user, smtpPassword(deps, user));
   try {
     await transport.sendMail({ envelope: { from: user.email, to: recipients }, raw: wire });

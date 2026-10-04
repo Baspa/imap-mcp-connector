@@ -25,6 +25,7 @@ export interface ToolContext {
   config: Config;
   pool: MailPool;
   smtpFactory: SmtpFactory;
+  mailGuard?: (user: User) => Promise<void>;
   userId: number;
 }
 
@@ -97,6 +98,7 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
     smtpFactory: ctx.smtpFactory,
     defaultSendLimitPerHour: ctx.config.defaultSendLimitPerHour,
     signInUrl: signInUrl(ctx.config),
+    guard: ctx.mailGuard,
   };
   const imap = <T>(user: User, fn: (client: ImapFlow) => Promise<T>) => ctx.pool.withImap(user, fn);
 

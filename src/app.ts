@@ -8,6 +8,7 @@ import type { SqliteOAuthProvider } from './auth/oauth-provider.js';
 import { SqliteSessionStore } from './auth/session.js';
 import { mcpUrl, type Config } from './config.js';
 import type { Db } from './db/index.js';
+import type { User } from './db/users.js';
 import { log } from './log.js';
 import type { MailPool } from './mail/pool.js';
 import type { SmtpFactory } from './mail/smtp.js';
@@ -24,6 +25,8 @@ export interface AppDeps {
   discover: LoginDeps['discover'];
   verifyImap: LoginDeps['verifyImap'];
   guard: LoginDeps['guard'];
+  /** Re-checks a stored user's mail settings before SMTP connections (IMAP is guarded by the pool). */
+  mailGuard?: (user: User) => Promise<void>;
 }
 
 const VIEWS_DIR = fileURLToPath(new URL('../views', import.meta.url));

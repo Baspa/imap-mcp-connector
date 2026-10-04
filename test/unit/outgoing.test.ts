@@ -2,14 +2,17 @@ import { simpleParser } from 'mailparser';
 import { describe, expect, it } from 'vitest';
 import { encryptSecret } from '../../src/crypto.js';
 import { sendsSince } from '../../src/db/counters.js';
-import { findUserById, updateSmtpSettings } from '../../src/db/users.js';
+import { findUserById, updateSmtpSettings, type User } from '../../src/db/users.js';
+import { GuardError } from '../../src/guard.js';
 import { sendEmail, type OutgoingDeps } from '../../src/mail/outgoing.js';
 import { MailPool } from '../../src/mail/pool.js';
 import type { SmtpFactory } from '../../src/mail/smtp.js';
 import { TEST_KEY } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
-function setup(opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean } = {}) {
+function setup(
+  opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean; guard?: (user: User) => Promise<void> } = {},
+) {
   const db = testDb();
   const user = createTestUser(db, { email: 'alice@x.org', password: 'imap-pw', autoSavesSent: opts.autoSavesSent ?? true });
   const sent: { envelope: { from: string; to: string[] }; raw: Buffer; password: string }[] = [];
@@ -33,7 +36,7 @@ function setup(opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; 
   let now = 1_000_000;
   const deps: OutgoingDeps = {
     db, key: TEST_KEY, pool, smtpFactory, defaultSendLimitPerHour: opts.limit ?? 20,
-    signInUrl: 'https://m.example.com/login', now: () => now,
+    signInUrl: 'https://m.example.com/login', now: () => now, guard: opts.guard,
   };
   return { db, user, deps, sent, advance: (ms: number) => (now += ms) };
 }
@@ -98,6 +101,18 @@ describe('sendEmail', () => {
     expect(err.code).toBe('AUTH_FAILED');
     expect(err.message).toMatch(/SMTP/);
     expect(findUserById(db, user.id)?.needsReauth).toBe(false);
+    expect(sendsSince(db, user.id, 0).count).toBe(0);
+  });
+
+  it('re-checks the guard before connecting to SMTP and releases the send slot', async () => {
+    const guard = async () => {
+      throw new GuardError('This mail server is not allowed on this instance. Ask the administrator.');
+    };
+    const { db, user, deps, sent } = setup({ guard });
+    const err = await sendEmail(deps, user, { to: ['b@y.org'], subject: 'x', body: 'x' }).catch((e) => e);
+    expect(err.code).toBe('PERMISSION_DENIED');
+    expect(err.message).toMatch(/not allowed/);
+    expect(sent).toHaveLength(0);
     expect(sendsSince(db, user.id, 0).count).toBe(0);
   });
 
