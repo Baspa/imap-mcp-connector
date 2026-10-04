@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import session from 'express-session';
 import type { LoginDeps } from './auth/login.js';
 import type { SqliteOAuthProvider } from './auth/oauth-provider.js';
 import { SqliteSessionStore } from './auth/session.js';
-import type { Config } from './config.js';
+import { mcpUrl, type Config } from './config.js';
 import type { Db } from './db/index.js';
 import { log } from './log.js';
 import type { MailPool } from './mail/pool.js';
 import type { SmtpFactory } from './mail/smtp.js';
+import { consentRouter } from './web/consent.js';
 import { webRouter } from './web/routes.js';
 
 export interface AppDeps {
@@ -69,6 +71,15 @@ export function createApp(deps: AppDeps): express.Express {
   });
 
   app.use(
+    mcpAuthRouter({
+      provider: deps.provider,
+      issuerUrl: new URL(deps.config.publicUrl.origin),
+      resourceServerUrl: mcpUrl(deps.config),
+      resourceName: 'IMAP Connector',
+    }),
+  );
+
+  app.use(
     session({
       store: new SqliteSessionStore(deps.db),
       secret: deps.config.sessionSecret,
@@ -80,6 +91,7 @@ export function createApp(deps: AppDeps): express.Express {
   );
   app.use(express.urlencoded({ extended: false, limit: '100kb' }));
   app.use(webRouter(deps));
+  app.use(consentRouter(deps));
   app.use((_req, res) => {
     res.status(404).render('error', { title: 'Not found', message: 'This page does not exist.' });
   });

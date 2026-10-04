@@ -1,0 +1,14 @@
+<%- include('partials/head', { title }) %>
+<h1>Allow <%= clientName %> to use your mailbox?</h1>
+<div class="card">
+  <p><strong><%= clientName %></strong> wants to access <strong><%= user.email %></strong>.</p>
+  <p>After approval you'll be sent to <strong><%= redirectHost %></strong>.</p>
+  <p>Current permission level: <strong><%= level %></strong>. You can change it any time in <a href="/settings">settings</a>, and revoke this app there too.</p>
+  <form method="post" action="/consent">
+    <input type="hidden" name="_csrf" value="<%= csrf %>">
+    <input type="hidden" name="req" value="<%= reqId %>">
+    <button type="submit" name="decision" value="approve">Approve</button>
+    <button type="submit" name="decision" value="deny" class="secondary">Deny</button>
+  </form>
+</div>
+<%- include('partials/foot') %>
