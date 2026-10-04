@@ -43,17 +43,29 @@ const app = createApp({
 purgeExpired(db, Date.now());
 setInterval(() => purgeExpired(db, Date.now()), 60 * 60 * 1000).unref();
 
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, (err?: Error) => {
+  if (err) {
+    log('error', 'listen failed', { port: config.port, error: err.message });
+    process.exit(1);
+  }
   log('info', 'listening', { port: config.port, publicUrl: config.publicUrl.href });
 });
 
 function shutdown(): void {
   log('info', 'shutting down');
-  server.close();
-  void pool.closeAll().finally(() => {
-    db.close();
-    process.exit(0);
+  const closed = new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
   });
+  closed
+    .then(() => pool.closeAll())
+    .then(() => {
+      db.close();
+      process.exit(0);
+    })
+    .catch((err: unknown) => {
+      log('error', 'shutdown failed', { error: err instanceof Error ? err.message : String(err) });
+      process.exit(1);
+    });
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);

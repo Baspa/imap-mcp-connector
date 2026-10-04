@@ -59,8 +59,10 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |
 | `PORT` | no (`3000`) | Listen port. |
 
-To change one user's send limit:
-`sqlite3 /data/imap-connector.db "UPDATE users SET send_limit_per_hour = 50 WHERE email = 'someone@example.com';"`
+To change one user's send limit (run in the deployment directory):
+```bash
+docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-connector.db'); db.prepare('UPDATE users SET send_limit_per_hour = ? WHERE email = ?').run(50, 'someone@example.com')"
+```
 
 ## Tools the AI gets
 
