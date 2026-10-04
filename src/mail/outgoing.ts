@@ -57,7 +57,7 @@ async function prepare(deps: OutgoingDeps, user: User, req: ComposeRequest, now:
 export async function createDraft(deps: OutgoingDeps, user: User, req: ComposeRequest) {
   const input = await prepare(deps, user, req, deps.now?.() ?? Date.now());
   const raw = await buildMime(input, { keepBcc: true });
-  const saved = await deps.pool.withImap(user, (c) => appendToRole(c, 'drafts', raw, ['\Draft', '\Seen']));
+  const saved = await deps.pool.withImap(user, (c) => appendToRole(c, 'drafts', raw, ['\\Draft', '\\Seen']));
   return { ...saved, messageId: input.messageId };
 }
 
@@ -114,7 +114,7 @@ export async function sendEmail(deps: OutgoingDeps, user: User, req: ComposeRequ
   if (!user.autoSavesSent) {
     try {
       const copy = await buildMime(input, { keepBcc: true });
-      await deps.pool.withImap(user, (c) => appendToRole(c, 'sent', copy, ['\Seen']));
+      await deps.pool.withImap(user, (c) => appendToRole(c, 'sent', copy, ['\\Seen']));
       savedToSent = true;
     } catch {
       savedToSent = false;

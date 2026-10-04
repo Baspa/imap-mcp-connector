@@ -9,9 +9,9 @@ import type { SmtpFactory } from '../../src/mail/smtp.js';
 import { TEST_KEY } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
-function setup(opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number } = {}) {
+function setup(opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean } = {}) {
   const db = testDb();
-  const user = createTestUser(db, { email: 'alice@x.org', password: 'imap-pw', autoSavesSent: true });
+  const user = createTestUser(db, { email: 'alice@x.org', password: 'imap-pw', autoSavesSent: opts.autoSavesSent ?? true });
   const sent: { envelope: { from: string; to: string[] }; raw: Buffer; password: string }[] = [];
   const smtpFactory: SmtpFactory = (_target, password) => ({
     async sendMail(m) {
@@ -82,6 +82,14 @@ describe('sendEmail', () => {
     expect(rejected[0].reason.code).toBe('RATE_LIMITED');
     expect(sent).toHaveLength(2);
     expect(sendsSince(db, user.id, 0).count).toBe(2);
+  });
+
+  it('still succeeds when the Sent copy cannot be saved', async () => {
+    const { db, user, deps, sent } = setup({ autoSavesSent: false });
+    const result = await sendEmail(deps, user, { to: ['b@y.org'], subject: 'x', body: 'x' });
+    expect(result.savedToSent).toBe(false);
+    expect(sent).toHaveLength(1);
+    expect(sendsSince(db, user.id, 0).count).toBe(1);
   });
 
   it('reports SMTP auth failures without forcing IMAP re-auth', async () => {

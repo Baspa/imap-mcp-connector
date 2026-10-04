@@ -39,9 +39,17 @@ describe('createDraft', () => {
     expect(r.folder).toBe('Drafts');
     const uid = await findUid(aliceImap, 'Drafts', 'Draft subject');
     const m = await getMessage(aliceImap, 'Drafts', uid);
-    expect(m.flags).toContain('\Draft');
+    expect(m.flags).toContain('\\Draft');
+    expect(m.flags).toContain('\\Seen');
     expect(m.body.trim()).toBe('Draft body');
     expect(m.messageId).toBe(r.messageId);
+    const lock = await aliceImap.getMailboxLock('Drafts');
+    try {
+      const src = await aliceImap.fetchOne(String(uid), { uid: true, source: true }, { uid: true });
+      expect(String(src && src.source)).toMatch(/^Bcc: .*hidden@test.local/im);
+    } finally {
+      lock.release();
+    }
   });
 
   it('threads a reply draft to the original', async () => {
@@ -70,7 +78,9 @@ describe('sendEmail', () => {
       await bobImap.logout();
     }
     const sentUid = await findUid(aliceImap, 'Sent', 'Hello Bob');
-    expect((await getMessage(aliceImap, 'Sent', sentUid)).messageId).toBe(r.messageId);
+    const sentCopy = await getMessage(aliceImap, 'Sent', sentUid);
+    expect(sentCopy.messageId).toBe(r.messageId);
+    expect(sentCopy.flags).toContain('\\Seen');
   });
 
   it('skips the Sent copy for providers that save it themselves', async () => {
