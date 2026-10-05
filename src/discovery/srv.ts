@@ -1,16 +1,23 @@
-import { promises as dns, type SrvRecord } from 'node:dns';
-import type { MailServerSettings, Security } from '../types.js';
+import { promises as dns, NODATA, NOTFOUND, type SrvRecord } from 'node:dns';
+import type { DiscoveryResult, Security } from '../types.js';
 
 type Resolver = (name: string) => Promise<SrvRecord[]>;
+type Lookup = { status: 'found'; record: SrvRecord } | { status: 'not_found' } | { status: 'error' };
 
-async function best(resolve: Resolver, name: string): Promise<SrvRecord | null> {
+// Only these answers mean the record definitively does not exist; anything else (SERVFAIL, timeouts,
+// refused connections, ...) is a failed lookup that must not be mistaken for "nothing published".
+const DEFINITIVE = new Set<unknown>([NOTFOUND, NODATA]);
+
+async function best(resolve: Resolver, name: string): Promise<Lookup> {
+  let records: SrvRecord[];
   try {
-    const records = (await resolve(name)).filter((r) => r.name && r.name !== '.');
-    records.sort((a, b) => a.priority - b.priority || b.weight - a.weight);
-    return records[0] ?? null;
-  } catch {
-    return null;
+    records = await resolve(name);
+  } catch (err) {
+    return DEFINITIVE.has((err as { code?: unknown } | null)?.code) ? { status: 'not_found' } : { status: 'error' };
   }
+  const usable = records.filter((r) => r.name && r.name !== '.');
+  usable.sort((a, b) => a.priority - b.priority || b.weight - a.weight);
+  return usable[0] ? { status: 'found', record: usable[0] } : { status: 'not_found' };
 }
 
 const host = (name: string) => name.replace(/\.$/, '');
@@ -18,23 +25,26 @@ const host = (name: string) => name.replace(/\.$/, '');
 export async function resolveSrvSettings(
   domain: string,
   resolve: Resolver = (n) => dns.resolveSrv(n),
-): Promise<MailServerSettings | null> {
+): Promise<DiscoveryResult> {
   const imap = await best(resolve, `_imaps._tcp.${domain}`);
-  if (!imap) return null;
+  if (imap.status !== 'found') return imap;
   let smtp = await best(resolve, `_submissions._tcp.${domain}`);
   let smtpSecurity: Security = 'tls';
-  if (!smtp) {
+  if (smtp.status === 'not_found') {
     smtp = await best(resolve, `_submission._tcp.${domain}`);
     smtpSecurity = 'starttls';
   }
-  if (!smtp) return null;
+  if (smtp.status !== 'found') return smtp;
   return {
-    imapHost: host(imap.name),
-    imapPort: imap.port,
-    imapSecurity: 'tls',
-    smtpHost: host(smtp.name),
-    smtpPort: smtp.port,
-    smtpSecurity,
-    autoSavesSent: false,
+    status: 'found',
+    settings: {
+      imapHost: host(imap.record.name),
+      imapPort: imap.record.port,
+      imapSecurity: 'tls',
+      smtpHost: host(smtp.record.name),
+      smtpPort: smtp.record.port,
+      smtpSecurity,
+      autoSavesSent: false,
+    },
   };
 }

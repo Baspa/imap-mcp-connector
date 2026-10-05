@@ -5,6 +5,7 @@ import type { Db } from '../db/index.js';
 import {
   createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, type User,
 } from '../db/users.js';
+import { DiscoveryUnavailableError } from '../discovery/index.js';
 import { GuardError } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
 import type { MailServerSettings } from '../types.js';
@@ -12,6 +13,7 @@ import type { MailServerSettings } from '../types.js';
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 10;
 const MAX_FAILURES_PER_EMAIL = 5;
+const MAX_DISCOVERIES_PER_IP = 20;
 
 export interface LoginDeps {
   db: Db;
@@ -34,6 +36,7 @@ export type LoginResult =
   | { status: 'needs_settings'; message: string }
   | { status: 'error'; message: string };
 
+const TOO_MANY = 'Too many sign-in attempts. Try again in 15 minutes.';
 const BAD_CREDENTIALS =
   'Email or password incorrect. Many providers (Gmail, iCloud, Yahoo) require an app password instead of your normal password.';
 
@@ -47,10 +50,38 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const ipKey = `ip:${input.ip}`;
   const emailKey = `email:${email}`;
 
+  // Checked before discovery so throttled clients cannot make the server hammer ISPDB/DNS.
+  if (
+    loginFailuresSince(deps.db, ipKey, since) >= MAX_FAILURES_PER_IP ||
+    loginFailuresSince(deps.db, emailKey, since) >= MAX_FAILURES_PER_EMAIL
+  ) {
+    return { status: 'error', message: TOO_MANY };
+  }
+
   const existing = findUserByEmail(deps.db, email);
-  // Discovered settings always win over user-supplied ones: otherwise anyone could register someone else's
-  // address pinned to their own server and capture the real owner's password at the owner's first sign-in.
-  const settings = existing ? serverSettingsOf(existing) : ((await deps.discover(email)) ?? input.manual ?? null);
+  let settings: MailServerSettings | null;
+  if (existing) {
+    settings = serverSettingsOf(existing);
+  } else {
+    const discoverKey = `discover:${input.ip}`;
+    if (loginFailuresSince(deps.db, discoverKey, since) >= MAX_DISCOVERIES_PER_IP) {
+      return { status: 'error', message: TOO_MANY };
+    }
+    recordLoginFailure(deps.db, discoverKey, now);
+    let discovered: MailServerSettings | null;
+    try {
+      discovered = await deps.discover(email);
+    } catch (err) {
+      if (err instanceof DiscoveryUnavailableError) {
+        return { status: 'error', message: "We couldn't look up your mail server settings right now. Please try again in a few minutes." };
+      }
+      throw err;
+    }
+    // Discovered settings always win over user-supplied ones, and user-supplied ones are only accepted when the
+    // lookup definitively found nothing (not when it failed): otherwise anyone could register someone else's
+    // address pinned to their own server and capture the real owner's password at the owner's first sign-in.
+    settings = discovered ?? input.manual ?? null;
+  }
   if (!settings) {
     return { status: 'needs_settings', message: "We couldn't detect your mail server settings. Enter them below." };
   }
@@ -71,7 +102,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   ) {
     deleteLoginAttempt(deps.db, ipAttemptId);
     deleteLoginAttempt(deps.db, emailAttemptId);
-    return { status: 'error', message: 'Too many sign-in attempts. Try again in 15 minutes.' };
+    return { status: 'error', message: TOO_MANY };
   }
 
   const result = await deps.verifyImap(

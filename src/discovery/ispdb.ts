@@ -1,5 +1,5 @@
-import { XMLParser } from 'fast-xml-parser';
-import type { MailServerSettings, Security } from '../types.js';
+import { XMLParser, XMLValidator } from 'fast-xml-parser';
+import type { DiscoveryResult, MailServerSettings, Security } from '../types.js';
 
 interface XmlServer {
   '@_type'?: string;
@@ -63,14 +63,28 @@ export function parseIspdb(xml: string, domain?: string): MailServerSettings | n
   }
 }
 
-export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch): Promise<MailServerSettings | null> {
+/** True when the body is well-formed XML with a clientConfig root, i.e. a real ISPDB answer rather than an error page. */
+function isClientConfig(xml: string): boolean {
+  try {
+    return XMLValidator.validate(xml) === true && new XMLParser().parse(xml)?.clientConfig !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+export async function fetchIspdb(domain: string, fetchFn: typeof fetch = fetch): Promise<DiscoveryResult> {
   try {
     const res = await fetchFn(`https://autoconfig.thunderbird.net/v1.1/${encodeURIComponent(domain)}`, {
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
-    return parseIspdb(await res.text(), domain);
+    // Only a 404 means the ISPDB has no entry; rate limiting, outages and the like are failed lookups.
+    if (res.status === 404) return { status: 'not_found' };
+    if (!res.ok) return { status: 'error' };
+    const body = await res.text();
+    if (!isClientConfig(body)) return { status: 'error' };
+    const settings = parseIspdb(body, domain);
+    return settings ? { status: 'found', settings } : { status: 'not_found' };
   } catch {
-    return null;
+    return { status: 'error' };
   }
 }

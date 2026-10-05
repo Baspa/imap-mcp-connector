@@ -10,3 +10,9 @@ export interface MailServerSettings {
   smtpSecurity: Security;
   autoSavesSent: boolean;
 }
+
+/** Outcome of one discovery source: settings, a definitive "nothing published", or a failed lookup. */
+export type DiscoveryResult =
+  | { status: 'found'; settings: MailServerSettings }
+  | { status: 'not_found' }
+  | { status: 'error' };

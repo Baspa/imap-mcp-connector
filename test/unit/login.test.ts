@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { decryptSecret } from '../../src/crypto.js';
 import { findUserByEmail, findUserById, setNeedsReauth } from '../../src/db/users.js';
 import { login, type LoginDeps } from '../../src/auth/login.js';
+import { DiscoveryUnavailableError } from '../../src/discovery/index.js';
 import { GuardError } from '../../src/guard.js';
 import type { MailServerSettings } from '../../src/types.js';
 import type { VerifyResult } from '../../src/mail/imap.js';
@@ -87,6 +88,56 @@ describe('login', () => {
     expect((await login(d, input)).status).toBe('needs_settings');
     const r = await login(d, { ...input, manual: { ...settings, imapHost: 'mail.custom.org' } });
     expect(r.status === 'ok' && r.user.imapHost).toBe('mail.custom.org');
+  });
+
+  it('refuses manual settings when the lookup failed and asks to retry', async () => {
+    const d = deps({ discover: vi.fn(async () => { throw new DiscoveryUnavailableError(); }) });
+    const manual = { ...settings, imapHost: 'imap.attacker.net', smtpHost: 'smtp.attacker.net' };
+    const r = await login(d, { ...input, manual });
+    expect(r).toEqual({
+      status: 'error',
+      message: "We couldn't look up your mail server settings right now. Please try again in a few minutes.",
+    });
+    expect(d.verifyImap).not.toHaveBeenCalled();
+    expect(d.guard).not.toHaveBeenCalled();
+    expect(findUserByEmail(d.db, 'alice@x.org')).toBeUndefined();
+  });
+
+  it('does not run discovery for a rate-limited email', async () => {
+    const d = deps();
+    for (let i = 0; i < 5; i++) await login(d, { ...input, password: 'wrong', ip: `10.0.0.${i}` });
+    expect(d.discover).toHaveBeenCalledTimes(5);
+    const r = await login(d, { ...input, ip: '9.9.9.9' });
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
+    expect(d.discover).toHaveBeenCalledTimes(5);
+  });
+
+  it('does not run discovery for a rate-limited IP', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong' });
+    expect(d.discover).toHaveBeenCalledTimes(10);
+    const r = await login(d, { ...input, email: 'fresh@x.org' });
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
+    expect(d.discover).toHaveBeenCalledTimes(10);
+  });
+
+  it('limits new-user discoveries to 20 per IP per 15 minutes', async () => {
+    let now = 1_000_000;
+    const d = deps({ now: () => now });
+    for (let i = 0; i < 20; i++) {
+      expect((await login(d, { ...input, email: `new${i}@x.org` })).status).toBe('ok');
+    }
+    const r = await login(d, { ...input, email: 'new20@x.org' });
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
+    expect(d.discover).toHaveBeenCalledTimes(20);
+    expect(findUserByEmail(d.db, 'new20@x.org')).toBeUndefined();
+
+    // Other IPs, existing users and a later window are unaffected.
+    expect((await login(d, { ...input, email: 'new20@x.org', ip: '5.6.7.8' })).status).toBe('ok');
+    expect((await login(d, { ...input, email: 'new0@x.org' })).status).toBe('ok');
+    now += 15 * 60 * 1000 + 1;
+    expect((await login(d, { ...input, email: 'new21@x.org' })).status).toBe('ok');
+    expect(d.discover).toHaveBeenCalledTimes(22);
   });
 
   it('manual settings are ignored when discovery succeeds', async () => {
