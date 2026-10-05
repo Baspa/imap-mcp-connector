@@ -9,6 +9,7 @@ import { SqliteSessionStore } from './auth/session.js';
 import { mcpUrl, type Config } from './config.js';
 import type { Db } from './db/index.js';
 import type { User } from './db/users.js';
+import type { PinnedAddresses } from './guard.js';
 import { log } from './log.js';
 import type { MailPool } from './mail/pool.js';
 import type { SmtpFactory } from './mail/smtp.js';
@@ -26,7 +27,7 @@ export interface AppDeps {
   verifyImap: LoginDeps['verifyImap'];
   guard: LoginDeps['guard'];
   /** Re-checks a stored user's mail settings before SMTP connections (IMAP is guarded by the pool). */
-  mailGuard?: (user: User) => Promise<void>;
+  mailGuard?: (user: User) => Promise<PinnedAddresses | void>;
 }
 
 const VIEWS_DIR = fileURLToPath(new URL('../views', import.meta.url));

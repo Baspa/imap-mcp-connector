@@ -2,7 +2,9 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
 import { openDb } from '../../src/db/index.js';
+import { migrations } from '../../src/db/migrations.js';
 import {
   deleteUser, findUserByEmail, findUserById, recordLogin, setNeedsReauth, setPermissionLevel, updateSmtpSettings,
 } from '../../src/db/users.js';
@@ -25,7 +27,24 @@ describe('migrations', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'imc-')), 'db.sqlite');
     openDb(file).close();
     const db = openDb(file);
-    expect(db.pragma('user_version', { simple: true })).toBe(1);
+    expect(db.pragma('user_version', { simple: true })).toBe(migrations.length);
+    db.close();
+  });
+
+  it('marks accounts created before settings sources were recorded as legacy', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'imc-')), 'db.sqlite');
+    const old = new Database(file);
+    old.exec(migrations[0]);
+    old.pragma('user_version = 1');
+    old.prepare(
+      `INSERT INTO users (email, imap_host, imap_port, imap_security, imap_password_enc, smtp_host, smtp_port,
+         smtp_security, smtp_username, created_at) VALUES ('a@custom.org', 'imap.attacker.net', 993, 'tls', 'x',
+         'smtp.attacker.net', 465, 'tls', 'a@custom.org', 1)`,
+    ).run();
+    old.close();
+    const db = openDb(file);
+    expect(findUserByEmail(db, 'a@custom.org')!.settingsSource).toBe('legacy');
+    expect(createTestUser(db).settingsSource).toBe('discovered');
     db.close();
   });
 });

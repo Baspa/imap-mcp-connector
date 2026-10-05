@@ -21,7 +21,7 @@ beforeEach(async () => {
   db = testDb();
   const a = await createMailUser();
   bob = await createMailUser();
-  alice = createUser(db, { ...greenmailSettings(), email: a.email, smtpUsername: a.email, imapPasswordEnc: encryptSecret(TEST_KEY, a.password) });
+  alice = createUser(db, { ...greenmailSettings(), email: a.email, smtpUsername: a.email, imapPasswordEnc: encryptSecret(TEST_KEY, a.password), settingsSource: 'discovered' });
   aliceImap = await connectImap(a.email, a.password);
   await createFolders(aliceImap);
   const pool = new MailPool({ db, key: TEST_KEY, signInUrl: 'http://localhost/login' });

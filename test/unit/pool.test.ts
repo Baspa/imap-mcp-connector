@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import type { ImapFlow } from 'imapflow';
 import { describe, expect, it } from 'vitest';
 import { findUserById, setNeedsReauth, type User } from '../../src/db/users.js';
-import { GuardError } from '../../src/guard.js';
+import { GuardError, type PinnedAddresses } from '../../src/guard.js';
+import type { ImapTarget } from '../../src/mail/imap.js';
 import { MailError } from '../../src/mail/errors.js';
 import { imapSecurityOptions, verifyImapLogin } from '../../src/mail/imap.js';
 import { MailPool } from '../../src/mail/pool.js';
@@ -34,11 +35,12 @@ const netError = () => Object.assign(new Error('reset'), { code: 'ECONNRESET' })
 const authError = () => Object.assign(new Error('auth'), { authenticationFailed: true });
 
 function setup(
-  opts: { connectErrors?: (Error | undefined)[]; idleMs?: number; timeoutMs?: number; guard?: (user: User) => Promise<void> } = {},
+  opts: { connectErrors?: (Error | undefined)[]; idleMs?: number; timeoutMs?: number; guard?: (user: User) => Promise<PinnedAddresses | void> } = {},
 ) {
   const db = testDb();
   const user = createTestUser(db);
   const clients: FakeClient[] = [];
+  const targets: ImapTarget[] = [];
   const errors = [...(opts.connectErrors ?? [])];
   const pool = new MailPool({
     db,
@@ -47,13 +49,14 @@ function setup(
     idleMs: opts.idleMs ?? 60_000,
     timeoutMs: opts.timeoutMs ?? 1_000,
     guard: opts.guard,
-    factory: () => {
+    factory: (target) => {
+      targets.push(target);
       const c = new FakeClient(errors.shift());
       clients.push(c);
       return c as unknown as ImapFlow;
     },
   });
-  return { db, user, pool, clients };
+  return { db, user, pool, clients, targets };
 }
 
 describe('MailPool', () => {
@@ -159,6 +162,12 @@ describe('MailPool', () => {
     expect(err.message).toBe('This mail server is not allowed on this instance. Ask the administrator.');
     expect(clients).toHaveLength(0);
     expect(findUserById(db, user.id)?.needsReauth).toBe(false);
+  });
+
+  it('connects to the address the guard vetted, not a fresh DNS answer', async () => {
+    const { user, pool, targets } = setup({ guard: async () => ({ imap: '93.184.216.34' }) });
+    await pool.withImap(user, async () => 1);
+    expect(targets[0]).toMatchObject({ imapHost: user.imapHost, connectAddress: '93.184.216.34' });
   });
 
   it('does not re-run the guard for a reused connection', async () => {

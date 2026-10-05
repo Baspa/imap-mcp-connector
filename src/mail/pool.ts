@@ -2,7 +2,7 @@ import type { ImapFlow } from 'imapflow';
 import { decryptSecret } from '../crypto.js';
 import type { Db } from '../db/index.js';
 import { setNeedsReauth, type User } from '../db/users.js';
-import { GuardError } from '../guard.js';
+import { GuardError, type PinnedAddresses } from '../guard.js';
 import { isConnectionError, MailError, OperationTimeoutError, toMailError } from './errors.js';
 import { defaultImapFactory, type ImapFactory } from './imap.js';
 
@@ -12,7 +12,7 @@ export interface MailPoolOptions {
   signInUrl: string;
   factory?: ImapFactory;
   /** Re-checks the instance allowlist and network rules before each new connection; throws GuardError to refuse. */
-  guard?: (user: User) => Promise<void>;
+  guard?: (user: User) => Promise<PinnedAddresses | void>;
   idleMs?: number;
   timeoutMs?: number;
 }
@@ -36,11 +36,14 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Runs the connection guard, reporting a refusal as PERMISSION_DENIED (not as an auth failure). */
-export async function runGuard(guard: ((user: User) => Promise<void>) | undefined, user: User): Promise<void> {
-  if (!guard) return;
+/**
+ * Runs the connection guard, reporting a refusal as PERMISSION_DENIED (not as an auth failure), and returns the
+ * addresses it vetted for the connection to use.
+ */
+export async function runGuard(guard: ((user: User) => Promise<PinnedAddresses | void>) | undefined, user: User): Promise<PinnedAddresses> {
+  if (!guard) return {};
   try {
-    await guard(user);
+    return (await guard(user)) ?? {};
   } catch (err) {
     if (err instanceof GuardError) throw new MailError('PERMISSION_DENIED', err.message);
     throw err;
@@ -132,14 +135,14 @@ export class MailPool {
     }
     if (existing) this.discard(user.id, existing.client);
 
-    await runGuard(this.opts.guard, user);
+    const pinned = await runGuard(this.opts.guard, user);
     let password: string;
     try {
       password = decryptSecret(this.opts.key, user.imapPasswordEnc);
     } catch {
       throw new MailError('AUTH_FAILED', 'The stored password could not be decrypted.');
     }
-    const client = this.factory(user, password);
+    const client = this.factory({ ...user, connectAddress: pinned.imap }, password);
     client.on('error', () => this.discard(user.id, client));
     try {
       await withTimeout(client.connect(), this.timeoutMs);

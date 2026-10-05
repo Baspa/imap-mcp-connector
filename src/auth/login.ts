@@ -3,12 +3,12 @@ import { encryptSecret } from '../crypto.js';
 import { deleteLoginAttempt, loginFailuresSince, recordLoginFailure } from '../db/counters.js';
 import type { Db } from '../db/index.js';
 import {
-  createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, type User,
+  createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, setSettingsSource, type User,
 } from '../db/users.js';
 import { DiscoveryUnavailableError } from '../discovery/index.js';
-import { GuardError } from '../guard.js';
+import { GuardError, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
-import type { MailServerSettings } from '../types.js';
+import type { MailServerSettings, SettingsSource } from '../types.js';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILURES_PER_IP = 10;
@@ -20,7 +20,7 @@ export interface LoginDeps {
   config: Config;
   discover(email: string): Promise<MailServerSettings | null>;
   verifyImap(target: ImapTarget, password: string): Promise<VerifyResult>;
-  guard(email: string, settings: MailServerSettings): Promise<void>;
+  guard(email: string, settings: MailServerSettings): Promise<PinnedAddresses | void>;
   now?: () => number;
 }
 
@@ -37,6 +37,8 @@ export type LoginResult =
   | { status: 'error'; message: string };
 
 const TOO_MANY = 'Too many sign-in attempts. Try again in 15 minutes.';
+const UNAPPROVED_SERVER =
+  "This instance only uses mail servers it can detect automatically or that the administrator listed in ALLOWED_IMAP_HOSTS, and yours is neither. Ask the administrator to add your IMAP server.";
 const BAD_CREDENTIALS =
   'Email or password incorrect. Many providers (Gmail, iCloud, Yahoo) require an app password instead of your normal password.';
 
@@ -59,35 +61,44 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   }
 
   const existing = findUserByEmail(deps.db, email);
-  let settings: MailServerSettings | null;
+  let settings: MailServerSettings;
+  let source: SettingsSource;
   if (existing) {
     settings = serverSettingsOf(existing);
-  } else {
-    const discoverKey = `discover:${input.ip}`;
-    if (loginFailuresSince(deps.db, discoverKey, since) >= MAX_DISCOVERIES_PER_IP) {
-      return { status: 'error', message: TOO_MANY };
-    }
-    recordLoginFailure(deps.db, discoverKey, now);
-    let discovered: MailServerSettings | null;
-    try {
-      discovered = await deps.discover(email);
-    } catch (err) {
-      if (err instanceof DiscoveryUnavailableError) {
-        return { status: 'error', message: "We couldn't look up your mail server settings right now. Please try again in a few minutes." };
+    source = existing.settingsSource;
+    // Never send a password to a stored server that could have been chosen by someone else (see isTrustedServer).
+    if (!isTrustedServer(deps.config, email, existing.imapHost, source)) {
+      if (source !== 'legacy') return { status: 'error', message: UNAPPROVED_SERVER };
+      const discovered = await rateLimitedDiscover(deps, input.ip, email, now, since);
+      if (!discovered.ok) return discovered.result;
+      if (discovered.settings?.imapHost.toLowerCase() !== existing.imapHost.toLowerCase()) {
+        return { status: 'error', message: UNAPPROVED_SERVER };
       }
-      throw err;
+      source = 'discovered';
     }
-    // Discovered settings always win over user-supplied ones, and user-supplied ones are only accepted when the
-    // lookup definitively found nothing (not when it failed): otherwise anyone could register someone else's
-    // address pinned to their own server and capture the real owner's password at the owner's first sign-in.
-    settings = discovered ?? input.manual ?? null;
-  }
-  if (!settings) {
-    return { status: 'needs_settings', message: "We couldn't detect your mail server settings. Enter them below." };
+  } else {
+    const discovered = await rateLimitedDiscover(deps, input.ip, email, now, since);
+    if (!discovered.ok) return discovered.result;
+    // Discovered settings always win over user-supplied ones. User-supplied ones are only accepted when the lookup
+    // definitively found nothing (not when it failed) and the administrator listed the server by name: otherwise
+    // anyone could register someone else's address pinned to their own server and capture the real owner's
+    // password at the owner's first sign-in.
+    if (discovered.settings) {
+      settings = discovered.settings;
+      source = 'discovered';
+    } else if (input.manual && isListedImapHost(deps.config, input.manual.imapHost)) {
+      settings = input.manual;
+      source = 'manual';
+    } else if (input.manual || !deps.config.allowedImapHosts.some((h) => h !== '*')) {
+      return { status: 'error', message: UNAPPROVED_SERVER };
+    } else {
+      return { status: 'needs_settings', message: "We couldn't detect your mail server settings. Enter them below." };
+    }
   }
 
+  let pinned: PinnedAddresses | void;
   try {
-    await deps.guard(email, settings);
+    pinned = await deps.guard(email, settings);
   } catch (err) {
     if (err instanceof GuardError) return { status: 'error', message: err.message };
     throw err;
@@ -106,7 +117,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   }
 
   const result = await deps.verifyImap(
-    { email, imapHost: settings.imapHost, imapPort: settings.imapPort, imapSecurity: settings.imapSecurity },
+    { email, imapHost: settings.imapHost, imapPort: settings.imapPort, imapSecurity: settings.imapSecurity, connectAddress: pinned?.imap },
     input.password,
   );
   if (result === 'unavailable') {
@@ -124,8 +135,35 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
     recordLogin(deps.db, existing.id, passwordEnc, now);
+    if (source !== existing.settingsSource) setSettingsSource(deps.db, existing.id, source);
     return { status: 'ok', user: findUserById(deps.db, existing.id)!, isNew: false };
   }
-  const user = createUser(deps.db, { ...settings, email, smtpUsername: email, imapPasswordEnc: passwordEnc }, now);
+  const user = createUser(
+    deps.db,
+    { ...settings, email, smtpUsername: email, imapPasswordEnc: passwordEnc, settingsSource: source === 'manual' ? 'manual' : 'discovered' },
+    now,
+  );
   return { status: 'ok', user, isNew: true };
+}
+
+type DiscoverOutcome = { ok: true; settings: MailServerSettings | null } | { ok: false; result: LoginResult };
+
+/** Runs discovery under the per-IP discovery limit, turning a failed lookup into a "try again" result. */
+async function rateLimitedDiscover(deps: LoginDeps, ip: string, email: string, now: number, since: number): Promise<DiscoverOutcome> {
+  const discoverKey = `discover:${ip}`;
+  if (loginFailuresSince(deps.db, discoverKey, since) >= MAX_DISCOVERIES_PER_IP) {
+    return { ok: false, result: { status: 'error', message: TOO_MANY } };
+  }
+  recordLoginFailure(deps.db, discoverKey, now);
+  try {
+    return { ok: true, settings: await deps.discover(email) };
+  } catch (err) {
+    if (err instanceof DiscoveryUnavailableError) {
+      return {
+        ok: false,
+        result: { status: 'error', message: "We couldn't look up your mail server settings right now. Please try again in a few minutes." },
+      };
+    }
+    throw err;
+  }
 }

@@ -1,7 +1,10 @@
 import { promises as dns } from 'node:dns';
+import { isIPv4 } from 'node:net';
 import ipaddr from 'ipaddr.js';
 import type { Config } from './config.js';
-import type { MailServerSettings } from './types.js';
+import { serverSettingsOf, type User } from './db/users.js';
+import { PRESETS } from './discovery/presets.js';
+import type { MailServerSettings, SettingsSource } from './types.js';
 
 export class GuardError extends Error {
   override name = 'GuardError';
@@ -25,6 +28,24 @@ export function isAllowed(config: Config, email: string, imapHost: string): bool
   return domainOk && hostOk;
 }
 
+/** True when ALLOWED_IMAP_HOSTS names this host; the "*" wildcard does not count. */
+export function isListedImapHost(config: Config, imapHost: string): boolean {
+  return config.allowedImapHosts.includes(imapHost.toLowerCase());
+}
+
+/**
+ * Whether an account's stored IMAP server may receive the account owner's password. Discovered settings come from
+ * the domain itself. Hand-entered ones are trusted only for servers the administrator listed by name: otherwise
+ * whoever signs in first with an address decides where its real owner's password is sent. Legacy accounts (created
+ * before the source was recorded) are trusted here only when they match a built-in preset or a listed server.
+ */
+export function isTrustedServer(config: Config, email: string, imapHost: string, source: SettingsSource): boolean {
+  if (source === 'discovered' || isListedImapHost(config, imapHost)) return true;
+  if (source === 'manual') return false;
+  const domain = email.slice(email.lastIndexOf('@') + 1).toLowerCase();
+  return Object.hasOwn(PRESETS, domain) && PRESETS[domain].imapHost === imapHost.toLowerCase();
+}
+
 export function isPublicAddress(addr: string): boolean {
   let parsed: ipaddr.IPv4 | ipaddr.IPv6;
   try {
@@ -38,7 +59,8 @@ export function isPublicAddress(addr: string): boolean {
   return parsed.range() === 'unicast';
 }
 
-async function assertPublicHost(host: string, lookup: LookupAll): Promise<void> {
+/** Resolves a host, requires every address to be public, and returns the one to connect to (IPv4 preferred). */
+async function vetPublicHost(host: string, lookup: LookupAll): Promise<string> {
   let addresses: { address: string }[];
   try {
     addresses = await lookup(host);
@@ -48,6 +70,16 @@ async function assertPublicHost(host: string, lookup: LookupAll): Promise<void> 
   if (addresses.length === 0 || addresses.some((a) => !isPublicAddress(a.address))) {
     throw new GuardError(`${host} resolves to a private or reserved address, which this instance does not allow.`);
   }
+  return (addresses.find((a) => isIPv4(a.address)) ?? addresses[0]).address;
+}
+
+/**
+ * Addresses the guard vetted. Connections must use these instead of resolving the hostname again: a second DNS
+ * answer could point somewhere private (DNS rebinding). Empty when private hosts are allowed and nothing was checked.
+ */
+export interface PinnedAddresses {
+  imap?: string;
+  smtp?: string;
 }
 
 export async function guardMailSettings(
@@ -55,15 +87,23 @@ export async function guardMailSettings(
   email: string,
   settings: MailServerSettings,
   lookup: LookupAll = defaultLookup,
-): Promise<void> {
+): Promise<PinnedAddresses> {
   if (!isAllowed(config, email, settings.imapHost)) {
     throw new GuardError('This mail server is not allowed on this instance. Ask the administrator.');
   }
-  if (config.allowPrivateHosts) return;
+  if (config.allowPrivateHosts) return {};
   if (settings.imapSecurity === 'none' || settings.smtpSecurity === 'none') {
     throw new GuardError('Unencrypted mail connections are not allowed on this instance.');
   }
-  for (const host of new Set([settings.imapHost, settings.smtpHost])) {
-    await assertPublicHost(host, lookup);
+  const imap = await vetPublicHost(settings.imapHost, lookup);
+  const smtp = settings.smtpHost === settings.imapHost ? imap : await vetPublicHost(settings.smtpHost, lookup);
+  return { imap, smtp };
+}
+
+/** Checks a stored account before a new mail connection: its server must be trusted and pass guardMailSettings. */
+export async function guardStoredUser(config: Config, user: User, lookup: LookupAll = defaultLookup): Promise<PinnedAddresses> {
+  if (!isTrustedServer(config, user.email, user.imapHost, user.settingsSource)) {
+    throw new GuardError("This account's mail server is not approved on this instance. Ask the user to sign in again.");
   }
+  return guardMailSettings(config, user.email, serverSettingsOf(user), lookup);
 }

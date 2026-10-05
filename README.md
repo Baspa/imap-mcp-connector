@@ -53,7 +53,7 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `ENCRYPTION_KEY` | yes | 32 random bytes, base64. Encrypts stored mail passwords. **Back it up**: if it is lost, users must sign in again. |
 | `SESSION_SECRET` | yes | ≥ 32 characters, signs session cookies. |
 | `ALLOWED_EMAIL_DOMAINS` | at least one of these | Comma-separated email domains allowed to sign in. |
-| `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server. |
+| `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server that auto-discovery finds. Hand-entered servers must be listed by name. |
 | `ALLOW_PRIVATE_HOSTS` | no (`false`) | Allow mail servers on private networks and unencrypted connections. |
 | `DEFAULT_SEND_LIMIT_PER_HOUR` | no (`20`) | Emails each user's AI may send per hour. |
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |
@@ -61,7 +61,13 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 
 When both allowlists are set, a sign-in must pass **both**: the email domain must be in `ALLOWED_EMAIL_DOMAINS` **and** the IMAP host must be in `ALLOWED_IMAP_HOSTS` (unless it is `*`). A list that is not set does not restrict, so `ALLOWED_EMAIL_DOMAINS` alone allows any public mail server for those domains. The check runs at sign-in, when SMTP settings change, and again before each new mail connection.
 
-Server settings are auto-discovered on first sign-in; settings typed into the sign-in form are only used when discovery finds nothing, and the first successful sign-in pins the server for that address. If the automatic lookup fails temporarily (for example the settings database or DNS is unreachable), sign-in is refused with a request to try again rather than falling back to typed settings, so manually entered settings are only accepted for domains that publish no settings at all. For domains that cannot be auto-discovered, whoever first signs in with working settings decides the server, so with `ALLOWED_IMAP_HOSTS=*` anyone could claim such an address on a server they control. In shared deployments, set `ALLOWED_IMAP_HOSTS` to the servers your users actually use.
+Server settings are auto-discovered on first sign-in (built-in presets, the Thunderbird ISPDB, then DNS SRV records), and the first successful sign-in pins the server for that address. Settings typed into the sign-in form are accepted only when discovery definitively finds nothing **and** the IMAP host is listed by name in `ALLOWED_IMAP_HOSTS` (`*` does not count). Otherwise, whoever signed in first with an address could point it at a server they control and capture the real owner's password at the owner's first sign-in. If the automatic lookup fails temporarily (for example the ISPDB or DNS is unreachable), sign-in is refused with a request to try again. Most company domains publish no discoverable settings, including Google Workspace and Microsoft-hosted ones, so for those domains list their IMAP server, e.g. `ALLOWED_IMAP_HOSTS=imap.gmail.com` or `ALLOWED_IMAP_HOSTS=mail.example.com`.
+
+**Upgrading from an earlier version:** accounts created before this rule are re-confirmed at their next sign-in. They keep working if their IMAP host matches a built-in preset, is listed in `ALLOWED_IMAP_HOSTS`, or matches what discovery finds now. Otherwise sign-in and AI access are refused until you list the host. Before listing a host, check that it is your users' real server:
+```bash
+docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-connector.db'); console.table(db.prepare(\"SELECT email, imap_host, smtp_host FROM users WHERE settings_source = 'legacy'\").all())"
+```
+Delete any account whose server is not its owner's real mail server (`DELETE FROM users WHERE email = ?`); the owner can then sign in normally.
 
 To change one user's send limit (run in the deployment directory):
 ```bash
@@ -80,8 +86,8 @@ docker compose exec app node -e "const db=require('better-sqlite3')('/data/imap-
 
 - **What is stored:** each user's email address, server settings, and mail password encrypted with AES-256-GCM using `ENCRYPTION_KEY`. OAuth codes and tokens are stored only as SHA-256 hashes.
 - **What is never logged:** passwords, tokens, or message content.
-- **Who can sign in:** only addresses or servers on your allowlist. Mail hosts resolving to private addresses are rejected unless `ALLOW_PRIVATE_HOSTS=true`.
-- **Prompt injection:** an email can contain text written to manipulate an AI. Email content is marked as untrusted for the model, tools carry read-only/destructive hints so AI apps ask before sending, sending is rate-limited, and sending is off by default. These measures reduce the risk but cannot eliminate it. Only enable **Full access** if you accept that risk.
+- **Who can sign in:** only addresses or servers on your allowlist. Mail hosts resolving to private addresses are rejected unless `ALLOW_PRIVATE_HOSTS=true`. Connections go to the exact address that passed this check (TLS still verifies the hostname), so a second DNS answer cannot redirect them to an internal address.
+- **Prompt injection:** an email can contain text written to manipulate an AI. Email content is marked as untrusted for the model (between tags carrying a random per-response id, so an email cannot fake the end of its block), tools carry read-only/destructive hints so AI apps ask before sending, sending is rate-limited, and sending is off by default. These measures reduce the risk but cannot eliminate it. Only enable **Full access** if you accept that risk.
 - Users can revoke any connected AI app, or delete their account, from the settings page.
 
 ## Deployment notes and known limitations

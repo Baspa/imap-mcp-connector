@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { convert } from 'html-to-text';
 
 export const MAX_BODY_BYTES = 50_000;
@@ -26,9 +27,14 @@ export function snippet(text: string, max = 200): string {
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
 }
 
+/**
+ * Wraps third-party text between tags carrying a random id. Embedded tag names are rewritten, and the id stops
+ * look-alike closing tags (zero-width characters, homoglyphs, ...) from passing as the real end of the block.
+ */
 export function wrapUntrusted(text: string): string {
+  const id = randomBytes(8).toString('hex');
   const safe = text.replace(/untrusted_email_content/gi, 'untrusted-email-content');
-  return `<${TAG}>\n${safe}\n</${TAG}>`;
+  return `<${TAG} id="${id}">\n${safe}\n</${TAG} id="${id}">`;
 }
 
 export function formatAddress(a?: { name?: string; address?: string }): string {

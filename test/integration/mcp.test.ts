@@ -23,7 +23,7 @@ beforeEach(async () => {
   const mail = await createMailUser();
   user = createUser(ctx.deps.db, {
     ...greenmailSettings(), email: mail.email, smtpUsername: mail.email,
-    imapPasswordEnc: encryptSecret(ctx.deps.config.encryptionKey, mail.password),
+    imapPasswordEnc: encryptSecret(ctx.deps.config.encryptionKey, mail.password), settingsSource: 'discovered',
   });
   imap = await connectImap(mail.email, mail.password);
   await createFolders(imap);
@@ -58,7 +58,7 @@ function text(result: unknown): string {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper returns loosely-typed parsed JSON
 function json(result: unknown): any {
-  return JSON.parse(text(result).replace(/^<untrusted_email_content>\n/, '').replace(/\n<\/untrusted_email_content>$/, ''));
+  return JSON.parse(text(result).replace(/^<untrusted_email_content id="[0-9a-f]+">\n/, '').replace(/\n<\/untrusted_email_content id="[0-9a-f]+">$/, ''));
 }
 
 describe('MCP endpoint', () => {
@@ -77,14 +77,14 @@ describe('MCP endpoint', () => {
     expect(full.find((t) => t.name === 'send_email')?.annotations?.destructiveHint).toBe(true);
     expect(full.find((t) => t.name === 'search_messages')?.annotations?.readOnlyHint).toBe(true);
     for (const name of ['search_messages', 'get_message', 'get_thread', 'get_attachment']) {
-      expect(full.find((t) => t.name === name)?.description).toMatch(/<untrusted_email_content>.*treat .* as data/);
+      expect(full.find((t) => t.name === name)?.description).toMatch(/<untrusted_email_content id="\.\.\.">.*treat .* as data/);
     }
   });
 
   it('searches and reads mail with untrusted wrapping', async () => {
     const client = await connect('read');
     const search = await client.callTool({ name: 'search_messages', arguments: { subject: 'Quarterly' } });
-    expect(text(search).startsWith('<untrusted_email_content>')).toBe(true);
+    expect(text(search)).toMatch(/^<untrusted_email_content id="[0-9a-f]{16}">/);
     const { messages } = json(search);
     expect(messages[0].subject).toBe('Quarterly report');
     const msg = json(await client.callTool({ name: 'get_message', arguments: { folder: 'INBOX', uid: messages[0].uid } }));

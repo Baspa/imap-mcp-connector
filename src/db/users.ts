@@ -1,5 +1,5 @@
 import type { Db } from './index.js';
-import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
+import type { MailServerSettings, PermissionLevel, Security, SettingsSource } from '../types.js';
 
 export interface User {
   id: number;
@@ -8,6 +8,7 @@ export interface User {
   imapPort: number;
   imapSecurity: Security;
   imapPasswordEnc: string;
+  settingsSource: SettingsSource;
   smtpHost: string;
   smtpPort: number;
   smtpSecurity: Security;
@@ -25,6 +26,7 @@ export interface NewUser extends MailServerSettings {
   email: string;
   imapPasswordEnc: string;
   smtpUsername: string;
+  settingsSource: Exclude<SettingsSource, 'legacy'>;
 }
 
 export interface SmtpSettings {
@@ -42,6 +44,7 @@ interface UserRow {
   imap_port: number;
   imap_security: Security;
   imap_password_enc: string;
+  settings_source: SettingsSource;
   smtp_host: string;
   smtp_port: number;
   smtp_security: Security;
@@ -63,6 +66,7 @@ function toUser(r: UserRow): User {
     imapPort: r.imap_port,
     imapSecurity: r.imap_security,
     imapPasswordEnc: r.imap_password_enc,
+    settingsSource: r.settings_source,
     smtpHost: r.smtp_host,
     smtpPort: r.smtp_port,
     smtpSecurity: r.smtp_security,
@@ -94,9 +98,9 @@ export function findUserById(db: Db, id: number): User | undefined {
 export function createUser(db: Db, u: NewUser, now = Date.now()): User {
   const info = db
     .prepare(
-      `INSERT INTO users (email, imap_host, imap_port, imap_security, imap_password_enc,
+      `INSERT INTO users (email, imap_host, imap_port, imap_security, imap_password_enc, settings_source,
          smtp_host, smtp_port, smtp_security, smtp_username, auto_saves_sent, created_at, last_login_at)
-       VALUES (@email, @imapHost, @imapPort, @imapSecurity, @imapPasswordEnc,
+       VALUES (@email, @imapHost, @imapPort, @imapSecurity, @imapPasswordEnc, @settingsSource,
          @smtpHost, @smtpPort, @smtpSecurity, @smtpUsername, @autoSavesSent, @now, @now)`,
     )
     .run({
@@ -105,6 +109,7 @@ export function createUser(db: Db, u: NewUser, now = Date.now()): User {
       imapPort: u.imapPort,
       imapSecurity: u.imapSecurity,
       imapPasswordEnc: u.imapPasswordEnc,
+      settingsSource: u.settingsSource,
       smtpHost: u.smtpHost,
       smtpPort: u.smtpPort,
       smtpSecurity: u.smtpSecurity,
@@ -132,6 +137,10 @@ export function updateSmtpSettings(db: Db, id: number, s: SmtpSettings): void {
 
 export function setPermissionLevel(db: Db, id: number, level: PermissionLevel): void {
   db.prepare('UPDATE users SET permission_level = ? WHERE id = ?').run(level, id);
+}
+
+export function setSettingsSource(db: Db, id: number, source: SettingsSource): void {
+  db.prepare('UPDATE users SET settings_source = ? WHERE id = ?').run(source, id);
 }
 
 export function setNeedsReauth(db: Db, id: number, value: boolean): void {

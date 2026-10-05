@@ -65,7 +65,7 @@ describe('web', () => {
   });
 
   it('asks for manual server settings when discovery fails', async () => {
-    const { app, deps } = testApp({ discover: async () => null });
+    const { app, deps } = testApp({ discover: async () => null }, { ALLOWED_IMAP_HOSTS: 'mail.custom.org' });
     const agent = request.agent(app);
     const page = await agent.get('/login');
     const first = await agent.post('/login').type('form').send({ _csrf: csrfFrom(page.text), email: 'a@custom.org', password: 'right' });

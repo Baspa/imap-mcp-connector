@@ -1,5 +1,7 @@
 export type PermissionLevel = 'read' | 'draft' | 'full';
 export type Security = 'tls' | 'starttls' | 'none';
+/** Where an account's server settings came from; 'legacy' accounts were created before this was recorded. */
+export type SettingsSource = 'discovered' | 'manual' | 'legacy';
 
 export interface MailServerSettings {
   imapHost: string;

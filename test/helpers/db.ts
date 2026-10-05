@@ -1,7 +1,9 @@
 import { encryptSecret } from '../../src/crypto.js';
 import { openDb, type Db } from '../../src/db/index.js';
-import { createUser, findUserById, setPermissionLevel, type NewUser, type User } from '../../src/db/users.js';
-import type { PermissionLevel } from '../../src/types.js';
+import {
+  createUser, findUserById, setPermissionLevel, setSettingsSource, type NewUser, type User,
+} from '../../src/db/users.js';
+import type { PermissionLevel, SettingsSource } from '../../src/types.js';
 import { TEST_KEY } from './config.js';
 
 let counter = 0;
@@ -12,9 +14,13 @@ export function testDb(): Db {
 
 export function createTestUser(
   db: Db,
-  opts: Partial<NewUser> & { password?: string; permissionLevel?: PermissionLevel } = {},
+  opts: Partial<Omit<NewUser, 'settingsSource'>> & {
+    password?: string;
+    permissionLevel?: PermissionLevel;
+    settingsSource?: SettingsSource;
+  } = {},
 ): User {
-  const { password = 'mail-password', permissionLevel, ...rest } = opts;
+  const { password = 'mail-password', permissionLevel, settingsSource = 'discovered', ...rest } = opts;
   const email = rest.email ?? `user${++counter}@example.com`;
   const user = createUser(db, {
     imapHost: 'imap.example.com',
@@ -28,7 +34,9 @@ export function createTestUser(
     imapPasswordEnc: encryptSecret(TEST_KEY, password),
     ...rest,
     email,
+    settingsSource: settingsSource === 'manual' ? 'manual' : 'discovered',
   });
   if (permissionLevel) setPermissionLevel(db, user.id, permissionLevel);
+  if (settingsSource === 'legacy') setSettingsSource(db, user.id, 'legacy');
   return findUserById(db, user.id)!;
 }

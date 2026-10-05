@@ -3,21 +3,23 @@ import { describe, expect, it } from 'vitest';
 import { encryptSecret } from '../../src/crypto.js';
 import { sendsSince } from '../../src/db/counters.js';
 import { findUserById, updateSmtpSettings, type User } from '../../src/db/users.js';
-import { GuardError } from '../../src/guard.js';
+import { GuardError, type PinnedAddresses } from '../../src/guard.js';
 import { sendEmail, type OutgoingDeps } from '../../src/mail/outgoing.js';
 import { MailPool } from '../../src/mail/pool.js';
-import type { SmtpFactory } from '../../src/mail/smtp.js';
+import type { SmtpFactory, SmtpTarget } from '../../src/mail/smtp.js';
 import { TEST_KEY } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
 function setup(
-  opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean; guard?: (user: User) => Promise<void> } = {},
+  opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean; guard?: (user: User) => Promise<PinnedAddresses | void> } = {},
 ) {
   const db = testDb();
   const user = createTestUser(db, { email: 'alice@x.org', password: 'imap-pw', autoSavesSent: opts.autoSavesSent ?? true });
   const sent: { envelope: { from: string; to: string[] }; raw: Buffer; password: string }[] = [];
-  const smtpFactory: SmtpFactory = (_target, password) => ({
+  const targets: SmtpTarget[] = [];
+  const smtpFactory: SmtpFactory = (target, password) => ({
     async sendMail(m) {
+      targets.push(target);
       if (opts.smtpDelayMs) await new Promise((r) => setTimeout(r, opts.smtpDelayMs));
       if (opts.smtpError) throw opts.smtpError;
       sent.push({ ...m, password });
@@ -38,7 +40,7 @@ function setup(
     db, key: TEST_KEY, pool, smtpFactory, defaultSendLimitPerHour: opts.limit ?? 20,
     signInUrl: 'https://m.example.com/login', now: () => now, guard: opts.guard,
   };
-  return { db, user, deps, sent, advance: (ms: number) => (now += ms) };
+  return { db, user, deps, sent, targets, advance: (ms: number) => (now += ms) };
 }
 
 describe('sendEmail', () => {
@@ -102,6 +104,12 @@ describe('sendEmail', () => {
     expect(err.message).toMatch(/SMTP/);
     expect(findUserById(db, user.id)?.needsReauth).toBe(false);
     expect(sendsSince(db, user.id, 0).count).toBe(0);
+  });
+
+  it('connects to the SMTP address the guard vetted, not a fresh DNS answer', async () => {
+    const { user, deps, targets } = setup({ guard: async () => ({ smtp: '93.184.216.35' }) });
+    await sendEmail(deps, user, { to: ['b@y.org'], subject: 'x', body: 'x' });
+    expect(targets[0]).toMatchObject({ smtpHost: user.smtpHost, connectAddress: '93.184.216.35' });
   });
 
   it('re-checks the guard before connecting to SMTP and releases the send slot', async () => {

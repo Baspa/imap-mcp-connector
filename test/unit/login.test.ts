@@ -7,7 +7,7 @@ import { GuardError } from '../../src/guard.js';
 import type { MailServerSettings } from '../../src/types.js';
 import type { VerifyResult } from '../../src/mail/imap.js';
 import { TEST_KEY, testConfig } from '../helpers/config.js';
-import { testDb } from '../helpers/db.js';
+import { createTestUser, testDb } from '../helpers/db.js';
 
 const settings: MailServerSettings = {
   imapHost: 'imap.x.org', imapPort: 993, imapSecurity: 'tls',
@@ -35,7 +35,7 @@ describe('login', () => {
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
     expect(r.isNew).toBe(true);
-    expect(r.user).toMatchObject({ email: 'alice@x.org', imapHost: 'imap.x.org', smtpUsername: 'alice@x.org', permissionLevel: 'draft' });
+    expect(r.user).toMatchObject({ email: 'alice@x.org', imapHost: 'imap.x.org', smtpUsername: 'alice@x.org', permissionLevel: 'draft', settingsSource: 'discovered' });
     expect(decryptSecret(TEST_KEY, r.user.imapPasswordEnc)).toBe('right');
     expect(d.verifyImap).toHaveBeenCalledWith(expect.objectContaining({ email: 'alice@x.org', imapHost: 'imap.x.org' }), 'right');
   });
@@ -83,11 +83,61 @@ describe('login', () => {
     expect(r.status).toBe('error');
   });
 
-  it('asks for manual settings when discovery fails, then uses them', async () => {
-    const d = deps({ discover: vi.fn(async () => null) });
+  it('asks for manual settings when discovery finds nothing, then uses a listed server', async () => {
+    const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: 'mail.custom.org' }) });
     expect((await login(d, input)).status).toBe('needs_settings');
     const r = await login(d, { ...input, manual: { ...settings, imapHost: 'mail.custom.org' } });
-    expect(r.status === 'ok' && r.user.imapHost).toBe('mail.custom.org');
+    expect(r.status === 'ok' && r.user).toMatchObject({ imapHost: 'mail.custom.org', settingsSource: 'manual' });
+  });
+
+  it('refuses hand-entered settings for a server the administrator has not listed', async () => {
+    // Otherwise whoever signs in first with an address decides which server receives its owner's password.
+    const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: '*' }) });
+    const manual = { ...settings, imapHost: 'imap.attacker.net', smtpHost: 'smtp.attacker.net' };
+    const r = await login(d, { ...input, email: 'ceo@custom.org', manual });
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/ALLOWED_IMAP_HOSTS/) });
+    expect(d.verifyImap).not.toHaveBeenCalled();
+    expect(findUserByEmail(d.db, 'ceo@custom.org')).toBeUndefined();
+  });
+
+  it('does not offer the settings form when no hand-entered server could be accepted', async () => {
+    const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: '*' }) });
+    expect(await login(d, input)).toEqual({ status: 'error', message: expect.stringMatching(/ALLOWED_IMAP_HOSTS/) });
+  });
+
+  it('refuses to sign in to a hand-entered account whose server is not listed', async () => {
+    const d = deps();
+    createTestUser(d.db, { email: input.email, imapHost: 'imap.attacker.net', settingsSource: 'manual' });
+    const r = await login(d, input);
+    expect(r).toEqual({ status: 'error', message: expect.stringMatching(/ALLOWED_IMAP_HOSTS/) });
+    expect(d.verifyImap).not.toHaveBeenCalled();
+  });
+
+  it('confirms a legacy account whose server matches discovery', async () => {
+    const d = deps();
+    const legacy = createTestUser(d.db, { email: input.email, imapHost: 'imap.x.org', settingsSource: 'legacy' });
+    const r = await login(d, input);
+    expect(r.status).toBe('ok');
+    expect(d.verifyImap).toHaveBeenCalledWith(expect.objectContaining({ imapHost: 'imap.x.org' }), 'right');
+    expect(findUserById(d.db, legacy.id)!.settingsSource).toBe('discovered');
+  });
+
+  it('refuses a legacy account whose server does not match discovery', async () => {
+    for (const discovered of [settings, null]) {
+      const d = deps({ discover: vi.fn(async () => discovered) });
+      const legacy = createTestUser(d.db, { email: input.email, imapHost: 'imap.attacker.net', settingsSource: 'legacy' });
+      const r = await login(d, input);
+      expect(r).toEqual({ status: 'error', message: expect.stringMatching(/ALLOWED_IMAP_HOSTS/) });
+      expect(d.verifyImap).not.toHaveBeenCalled();
+      expect(findUserById(d.db, legacy.id)!.settingsSource).toBe('legacy');
+    }
+  });
+
+  it('asks to retry when a legacy account cannot be confirmed because discovery failed', async () => {
+    const d = deps({ discover: vi.fn(async () => { throw new DiscoveryUnavailableError(); }) });
+    createTestUser(d.db, { email: input.email, imapHost: 'imap.x.org', settingsSource: 'legacy' });
+    expect(await login(d, input)).toEqual({ status: 'error', message: expect.stringMatching(/try again/) });
+    expect(d.verifyImap).not.toHaveBeenCalled();
   });
 
   it('refuses manual settings when the lookup failed and asks to retry', async () => {
@@ -151,6 +201,12 @@ describe('login', () => {
     expect(d.verifyImap).toHaveBeenCalledWith(expect.objectContaining({ imapHost: 'imap.example.com' }), 'right');
     expect(d.guard).toHaveBeenCalledWith('alice@x.org', discovered);
     expect(r.user).toMatchObject({ imapHost: 'imap.example.com', smtpHost: 'smtp.example.com' });
+  });
+
+  it('verifies the password against the address the guard vetted', async () => {
+    const d = deps({ guard: vi.fn(async () => ({ imap: '93.184.216.34' })) });
+    await login(d, input);
+    expect(d.verifyImap).toHaveBeenCalledWith(expect.objectContaining({ imapHost: 'imap.x.org', connectAddress: '93.184.216.34' }), 'right');
   });
 
   it('returns guard errors to the user', async () => {

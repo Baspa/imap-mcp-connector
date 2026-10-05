@@ -4,10 +4,10 @@ import { createApp } from './app.js';
 import { SqliteOAuthProvider } from './auth/oauth-provider.js';
 import { ConfigError, loadConfig, signInUrl, type Config } from './config.js';
 import { openDb } from './db/index.js';
-import { serverSettingsOf, type User } from './db/users.js';
+import type { User } from './db/users.js';
 import { purgeExpired } from './db/purge.js';
 import { discoverSettings } from './discovery/index.js';
-import { guardMailSettings } from './guard.js';
+import { guardMailSettings, guardStoredUser } from './guard.js';
 import { log } from './log.js';
 import { verifyImapLogin } from './mail/imap.js';
 import { MailPool } from './mail/pool.js';
@@ -29,7 +29,7 @@ const config = loadConfigOrExit();
 mkdirSync(config.dataDir, { recursive: true });
 const db = openDb(path.join(config.dataDir, 'imap-connector.db'));
 // Re-check stored settings on every new connection, so allowlist or DNS changes apply to existing users.
-const mailGuard = (u: User) => guardMailSettings(config, u.email, serverSettingsOf(u));
+const mailGuard = (u: User) => guardStoredUser(config, u);
 const pool = new MailPool({ db, key: config.encryptionKey, signInUrl: signInUrl(config), guard: mailGuard });
 
 const app = createApp({

@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { ImapFlow } from 'imapflow';
 import type { Security } from '../types.js';
 import { toMailError } from './errors.js';
@@ -7,6 +8,13 @@ export interface ImapTarget {
   imapHost: string;
   imapPort: number;
   imapSecurity: Security;
+  /** Address the guard vetted for imapHost; connect here instead of resolving the hostname again. */
+  connectAddress?: string;
+}
+
+/** TLS must still verify the certificate against the hostname when the socket goes to a pinned address. */
+export function tlsServername(host: string): string | undefined {
+  return isIP(host) ? undefined : host;
 }
 
 export type ImapFactory = (target: ImapTarget, password: string) => ImapFlow;
@@ -19,7 +27,8 @@ export function imapSecurityOptions(security: Security): { secure: boolean; doST
 
 export const defaultImapFactory: ImapFactory = (target, password) =>
   new ImapFlow({
-    host: target.imapHost,
+    host: target.connectAddress ?? target.imapHost,
+    servername: tlsServername(target.imapHost),
     port: target.imapPort,
     ...imapSecurityOptions(target.imapSecurity),
     auth: { user: target.email, pass: password },

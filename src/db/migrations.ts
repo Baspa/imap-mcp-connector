@@ -76,4 +76,10 @@ export const migrations: string[] = [
   );
   CREATE INDEX login_attempts_key ON login_attempts(key, attempted_at);
   `,
+  // Where an account's server settings came from. Accounts created before this was recorded are 'legacy' and must be
+  // re-confirmed (built-in preset, listed host or matching discovery) before their server receives a password again.
+  `
+  ALTER TABLE users ADD COLUMN settings_source TEXT NOT NULL DEFAULT 'legacy'
+    CHECK (settings_source IN ('discovered','manual','legacy'));
+  `,
 ];
