@@ -1,5 +1,28 @@
+# Dependencies and build output
 node_modules/
 dist/
-data/
-.env
+*.tsbuildinfo
 coverage/
+
+# Local data and secrets
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent scratch space
+.superpowers/
