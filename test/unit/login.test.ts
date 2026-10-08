@@ -86,8 +86,18 @@ describe('login', () => {
   it('asks for manual settings when discovery finds nothing, then uses a listed server', async () => {
     const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: 'mail.custom.org' }) });
     expect((await login(d, input)).status).toBe('needs_settings');
-    const r = await login(d, { ...input, manual: { ...settings, imapHost: 'mail.custom.org' } });
+    const r = await login(d, { ...input, manual: { ...settings, imapHost: 'mail.custom.org', smtpHost: 'mail.custom.org' } });
     expect(r.status === 'ok' && r.user).toMatchObject({ imapHost: 'mail.custom.org', settingsSource: 'manual' });
+  });
+
+  it('refuses hand-entered settings that send the password to an unlisted SMTP server', async () => {
+    const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: 'mail.custom.org' }) });
+    const r = await login(d, { ...input, manual: { ...settings, imapHost: 'mail.custom.org', smtpHost: 'smtp.attacker.net' } });
+    expect(r).toMatchObject({ status: 'error', message: expect.stringContaining('SMTP') });
+    expect(findUserByEmail(d.db, input.email)).toBeUndefined();
+    const listed = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: 'mail.custom.org,smtp.custom.org' }) });
+    const ok = await login(listed, { ...input, manual: { ...settings, imapHost: 'mail.custom.org', smtpHost: 'SMTP.custom.org' } });
+    expect(ok.status).toBe('ok');
   });
 
   it('refuses hand-entered settings for a server the administrator has not listed', async () => {

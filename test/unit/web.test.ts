@@ -103,7 +103,10 @@ describe('web', () => {
 
   it('updates SMTP settings and reports guard rejections', async () => {
     let reject = false;
-    const { app, deps } = testApp({ guard: async () => { if (reject) throw new GuardError('smtp.lan resolves to a private or reserved address'); } });
+    const { app, deps } = testApp(
+      { guard: async () => { if (reject) throw new GuardError('smtp.lan resolves to a private or reserved address'); } },
+      { ALLOWED_IMAP_HOSTS: '*,smtp.other.org,smtp.lan' },
+    );
     const agent = request.agent(app);
     await signIn(agent);
     const csrf = csrfFrom((await agent.get('/settings')).text);
@@ -120,6 +123,32 @@ describe('web', () => {
     const reset = await agent.post('/settings/smtp').type('form').send({ ...form, use_imap_password: 'on' });
     expect(reset.status).toBe(302);
     expect(findUserByEmail(deps.db, 'alice@x.org')?.smtpPasswordEnc).toBeNull();
+  });
+
+  it('refuses an SMTP server that is neither the IMAP host nor listed, but accepts unchanged settings', async () => {
+    const { app, deps } = testApp();
+    const agent = request.agent(app);
+    await signIn(agent);
+    const csrf = csrfFrom((await agent.get('/settings')).text);
+    const form = { _csrf: csrf, smtp_host: 'smtp.attacker.net', smtp_port: '587', smtp_security: 'starttls', smtp_username: 'alice', use_imap_password: 'on' };
+    const bad = await agent.post('/settings/smtp').type('form').send(form);
+    expect(bad.status).toBe(400);
+    expect(bad.text).toContain('not allowed on this instance');
+    expect(findUserByEmail(deps.db, 'alice@x.org')?.smtpHost).toBe('smtp.x.org');
+    const same = await agent.post('/settings/smtp').type('form').send({ ...form, smtp_host: 'SMTP.x.org', smtp_password: 'new-secret', use_imap_password: undefined });
+    expect(same.headers.location).toBe('/settings?saved=smtp');
+    const imapHost = await agent.post('/settings/smtp').type('form').send({ ...form, smtp_host: 'imap.x.org' });
+    expect(imapHost.headers.location).toBe('/settings?saved=smtp');
+  });
+
+  it('sends hardening headers, and HSTS only in production', async () => {
+    const dev = await request(testApp().app).get('/healthz');
+    expect(dev.headers['x-content-type-options']).toBe('nosniff');
+    expect(dev.headers['referrer-policy']).toBe('no-referrer');
+    expect(dev.headers['x-frame-options']).toBe('DENY');
+    expect(dev.headers['strict-transport-security']).toBeUndefined();
+    const prod = await request(testApp({}, { NODE_ENV: 'production', PUBLIC_URL: 'https://mail.x.org' }).app).get('/healthz');
+    expect(prod.headers['strict-transport-security']).toBe('max-age=31536000');
   });
 
   it('lists connected apps and revokes them', async () => {
