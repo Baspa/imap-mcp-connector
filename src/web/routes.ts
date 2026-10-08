@@ -6,7 +6,7 @@ import { mcpUrl } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
-import { GuardError } from '../guard.js';
+import { GuardError, isAllowedSmtpHost } from '../guard.js';
 import { log } from '../log.js';
 import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
@@ -136,6 +136,10 @@ export function webRouter(deps: AppDeps): Router {
       return renderSettings(deps, req, res, 'Check the SMTP settings.', 400);
     }
     const smtp = { smtpHost: b.smtp_host.trim(), smtpPort, smtpSecurity: b.smtp_security };
+    // The IMAP password is the default SMTP password, so only the current server, the IMAP host or a listed host is allowed.
+    if (smtp.smtpHost.toLowerCase() !== user.smtpHost.toLowerCase() && !isAllowedSmtpHost(deps.config, user.imapHost, smtp.smtpHost)) {
+      return renderSettings(deps, req, res, 'This SMTP server is not allowed on this instance. Ask the administrator to list it in ALLOWED_IMAP_HOSTS.', 400);
+    }
     try {
       await deps.guard(user.email, { ...serverSettingsOf(user), ...smtp });
     } catch (err) {

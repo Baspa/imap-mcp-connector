@@ -38,9 +38,12 @@ const requestId: RequestHandler = (_req, res, next) => {
   next();
 };
 
-const noFraming: RequestHandler = (_req, res, next) => {
+const securityHeaders = (config: Config): RequestHandler => (_req, res, next) => {
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Content-Security-Policy', "frame-ancestors 'none'");
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  if (config.isProduction) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
   next();
 };
 
@@ -77,7 +80,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.set('views', VIEWS_DIR);
 
   app.use(requestId);
-  app.use(noFraming);
+  app.use(securityHeaders(deps.config));
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true });
   });

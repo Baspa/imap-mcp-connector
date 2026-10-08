@@ -6,7 +6,7 @@ import {
   createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, setSettingsSource, type User,
 } from '../db/users.js';
 import { DiscoveryUnavailableError } from '../discovery/index.js';
-import { GuardError, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
+import { GuardError, isAllowedSmtpHost, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
 import type { MailServerSettings, SettingsSource } from '../types.js';
 
@@ -39,6 +39,8 @@ export type LoginResult =
 const TOO_MANY = 'Too many sign-in attempts. Try again in 15 minutes.';
 const UNAPPROVED_SERVER =
   "This instance only uses mail servers it can detect automatically or that the administrator listed in ALLOWED_IMAP_HOSTS, and yours is neither. Ask the administrator to add your IMAP server.";
+const UNAPPROVED_SMTP =
+  "The outgoing (SMTP) server must be the same as your IMAP server or listed by the administrator in ALLOWED_IMAP_HOSTS, because your mail password is sent to it.";
 const BAD_CREDENTIALS =
   'Email or password incorrect. Many providers (Gmail, iCloud, Yahoo) require an app password instead of your normal password.';
 
@@ -87,6 +89,9 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
       settings = discovered.settings;
       source = 'discovered';
     } else if (input.manual && isListedImapHost(deps.config, input.manual.imapHost)) {
+      if (!isAllowedSmtpHost(deps.config, input.manual.imapHost, input.manual.smtpHost)) {
+        return { status: 'error', message: UNAPPROVED_SMTP };
+      }
       settings = input.manual;
       source = 'manual';
     } else if (input.manual || !deps.config.allowedImapHosts.some((h) => h !== '*')) {
