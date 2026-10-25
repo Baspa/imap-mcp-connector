@@ -28,6 +28,15 @@ export function isAllowed(config: Config, email: string, imapHost: string): bool
   return domainOk && hostOk;
 }
 
+/**
+ * Whether a hand-entered or changed SMTP server may be used. The IMAP password is sent to the SMTP server by default,
+ * so it must be the account's own IMAP host or a host the administrator listed by name ("*" does not count).
+ */
+export function isAllowedSmtpHost(config: Config, imapHost: string, smtpHost: string): boolean {
+  const smtp = smtpHost.toLowerCase();
+  return smtp === imapHost.toLowerCase() || config.allowedImapHosts.some((h) => h !== '*' && h === smtp);
+}
+
 /** True when ALLOWED_IMAP_HOSTS names this host; the "*" wildcard does not count. */
 export function isListedImapHost(config: Config, imapHost: string): boolean {
   return config.allowedImapHosts.includes(imapHost.toLowerCase());

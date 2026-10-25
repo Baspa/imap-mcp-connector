@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  GuardError, guardMailSettings, guardStoredUser, isAllowed, isListedImapHost, isPublicAddress, isTrustedServer,
+  GuardError, guardMailSettings, guardStoredUser, isAllowed, isAllowedSmtpHost, isListedImapHost, isPublicAddress, isTrustedServer,
 } from '../../src/guard.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 import type { MailServerSettings } from '../../src/types.js';
@@ -41,6 +41,22 @@ describe('isAllowed', () => {
     const c = testConfig({ ALLOWED_EMAIL_DOMAINS: 'example.com', ALLOWED_IMAP_HOSTS: '*' });
     expect(isAllowed(c, 'a@example.com', 'imap.anything.net')).toBe(true);
     expect(isAllowed(c, 'a@x.org', 'imap.anything.net')).toBe(false);
+  });
+});
+
+describe('isAllowedSmtpHost', () => {
+  it('allows the IMAP host itself, case-insensitively', () => {
+    expect(isAllowedSmtpHost(testConfig(), 'mail.example.com', 'MAIL.example.com')).toBe(true);
+  });
+
+  it('allows a host the administrator listed by name', () => {
+    const c = testConfig({ ALLOWED_IMAP_HOSTS: 'mail.example.com,smtp.example.com' });
+    expect(isAllowedSmtpHost(c, 'mail.example.com', 'smtp.example.com')).toBe(true);
+  });
+
+  it('rejects any other host, and the wildcard does not count', () => {
+    expect(isAllowedSmtpHost(testConfig(), 'mail.example.com', 'smtp.attacker.net')).toBe(false);
+    expect(isAllowedSmtpHost(testConfig({ ALLOWED_IMAP_HOSTS: 'mail.example.com' }), 'mail.example.com', 'smtp.attacker.net')).toBe(false);
   });
 });
 
