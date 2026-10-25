@@ -50,8 +50,7 @@ git pull origin $FORGE_SITE_BRANCH
 npm ci
 npm run build
 npm prune --omit=dev
-( flock -w 10 9 || exit 1
-    echo 'Restarting daemon...'; sudo -S supervisorctl restart daemon-<id>:* ) 9>/tmp/imap-mcp-restart.lock
+sudo -S supervisorctl restart daemon-<id>:*
 ```
 
 Replace `daemon-<id>` with the name Forge shows after you create the daemon (step 6). `npm ci` installs the dev dependencies the TypeScript build needs; `npm prune --omit=dev` then removes them again, as the Dockerfile does.
