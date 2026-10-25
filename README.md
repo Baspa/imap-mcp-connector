@@ -26,7 +26,7 @@ Use your own mailbox from **Claude** or **ChatGPT**. This is a small self-hosted
 
 Caddy obtains HTTPS certificates automatically.
 
-Not using Docker? See [hosting on Laravel Forge](docs/deploy/forge.md).
+Other ways to run it: [try it from your own computer with a tunnel](docs/deploy/tunnel.md) (`npm run tunnel`), [a VPS with Docker Compose](docs/deploy/vps.md), or [Laravel Forge](docs/deploy/forge.md).
 
 ## Connect to Claude
 
