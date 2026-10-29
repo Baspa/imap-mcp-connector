@@ -147,8 +147,13 @@ export class SqliteOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('Invalid or expired authorization code');
     }
     if (redirectUri && redirectUri !== code.redirectUri) throw new InvalidGrantError('redirect_uri does not match');
-    if (!markCodeUsed(this.db, hash)) throw new InvalidGrantError('Authorization code already used');
-    return this.issue(code.clientId, code.userId, code.scopes, randomUUID());
+    const grantId = randomUUID();
+    if (!markCodeUsed(this.db, hash, grantId)) {
+      // Someone else has this code. Whatever the first redemption issued is no longer trustworthy.
+      if (code.grantId) revokeGrant(this.db, code.grantId, this.now());
+      throw new InvalidGrantError('Authorization code already used');
+    }
+    return this.issue(code.clientId, code.userId, code.scopes, grantId);
   }
 
   async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string): Promise<OAuthTokens> {

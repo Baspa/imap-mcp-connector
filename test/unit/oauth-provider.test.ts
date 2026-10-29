@@ -75,6 +75,20 @@ describe('SqliteOAuthProvider', () => {
     await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toBeInstanceOf(InvalidGrantError);
   });
 
+  it('revokes the tokens the code produced when the code is replayed', async () => {
+    // A replayed code means someone else has it, so the tokens it already issued cannot be trusted.
+    const { provider, user, db } = setup();
+    const client = await register(provider);
+    const code = await codeFor(provider, client, user.id);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, undefined, client.redirect_uris[0]);
+    expect(await provider.verifyAccessToken(tokens.access_token)).toBeTruthy();
+
+    await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toBeInstanceOf(InvalidGrantError);
+
+    await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toBeInstanceOf(InvalidTokenError);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(0);
+  });
+
   it('rejects codes from another client, expired codes and wrong redirect URIs', async () => {
     const { provider, user, advance } = setup();
     const client = await register(provider);

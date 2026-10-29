@@ -82,4 +82,8 @@ export const migrations: string[] = [
   ALTER TABLE users ADD COLUMN settings_source TEXT NOT NULL DEFAULT 'legacy'
     CHECK (settings_source IN ('discovered','manual','legacy'));
   `,
+  // The grant a code produced, so replaying the code can revoke what it already issued.
+  `
+  ALTER TABLE oauth_codes ADD COLUMN grant_id TEXT;
+  `,
 ];
