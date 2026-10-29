@@ -187,6 +187,10 @@ export function listActiveGrants(db: Db, userId: number, now: number): GrantSumm
   }));
 }
 
+export function revokeAllUserGrants(db: Db, userId: number, now: number): void {
+  db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now, userId);
+}
+
 export function revokeUserGrant(db: Db, userId: number, grantId: string, now: number): void {
   db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE grant_id = ? AND user_id = ? AND revoked_at IS NULL').run(
     now,

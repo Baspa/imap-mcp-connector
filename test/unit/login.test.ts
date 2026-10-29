@@ -6,6 +6,7 @@ import { DiscoveryUnavailableError } from '../../src/discovery/index.js';
 import { GuardError } from '../../src/guard.js';
 import type { MailServerSettings } from '../../src/types.js';
 import type { VerifyResult } from '../../src/mail/imap.js';
+import { insertClient, insertToken, listActiveGrants } from '../../src/db/oauth.js';
 import { TEST_KEY, testConfig } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
@@ -334,5 +335,38 @@ describe('login', () => {
     expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((d.verifyImap as any).mock.calls.length).toBe(10);
+  });
+});
+
+describe('login and connected AI apps', () => {
+  function grantFor(db: ReturnType<typeof testDb>, userId: number, now: number) {
+    insertClient(db, { client_id: 'c1', client_name: 'Test AI', redirect_uris: ['http://localhost/cb'] } as never, now);
+    insertToken(db, {
+      tokenHash: 'hash-refresh', kind: 'refresh', grantId: 'g1', clientId: 'c1',
+      userId, scopes: [], createdAt: now, expiresAt: now + 1_000_000,
+    });
+  }
+
+  it('revokes connected apps when the mail password changes', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    grantFor(db, user.id, 1_000_000);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
+
+    await login(d, { ...input, password: 'a-new-password' });
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(0);
+  });
+
+  it('keeps connected apps when the same password is used again', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    grantFor(db, user.id, 1_000_000);
+
+    await login(d, input);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
   });
 });

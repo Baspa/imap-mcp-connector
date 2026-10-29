@@ -1,11 +1,12 @@
 import ipaddr from 'ipaddr.js';
 import type { Config } from '../config.js';
-import { encryptSecret } from '../crypto.js';
+import { decryptSecret, encryptSecret } from '../crypto.js';
 import { deleteLoginAttempt, loginFailuresSince, recordLoginFailure } from '../db/counters.js';
 import type { Db } from '../db/index.js';
 import {
   createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, setSettingsSource, type User,
 } from '../db/users.js';
+import { revokeAllUserGrants } from '../db/oauth.js';
 import { DiscoveryUnavailableError } from '../discovery/index.js';
 import { GuardError, isAllowedSmtpHost, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
@@ -60,6 +61,15 @@ export function rateLimitScope(ip: string): string {
   const v6 = parsed as ipaddr.IPv6;
   if (v6.isIPv4MappedAddress()) return v6.toIPv4Address().toNormalizedString();
   return `${v6.toByteArray().slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('')}/64`;
+}
+
+/** The password currently stored for a user, or null when it cannot be read with this key. */
+function storedPassword(deps: LoginDeps, user: User): string | null {
+  try {
+    return decryptSecret(deps.config.encryptionKey, user.imapPasswordEnc);
+  } catch {
+    return null;
+  }
 }
 
 export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginResult> {
@@ -157,6 +167,8 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
 
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
+    // A changed mail password is how someone locks a mailbox down, so connected AI apps must lose access too.
+    if (storedPassword(deps, existing) !== input.password) revokeAllUserGrants(deps.db, existing.id, now);
     recordLogin(deps.db, existing.id, passwordEnc, now);
     if (source !== existing.settingsSource) setSettingsSource(deps.db, existing.id, source);
     return { status: 'ok', user: findUserById(deps.db, existing.id)!, isNew: false };

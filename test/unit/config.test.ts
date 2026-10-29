@@ -3,6 +3,11 @@ import { ConfigError, loadConfig, mcpUrl, signInUrl } from '../../src/config.js'
 import { TEST_KEY, testEnv } from '../helpers/config.js';
 
 describe('loadConfig', () => {
+  it('parses ALLOWED_RECIPIENT_DOMAINS as a lowercased comma list', () => {
+    const c = loadConfig(testEnv({ ALLOWED_RECIPIENT_DOMAINS: ' Example.com, Partner.org ,' }));
+    expect(c.allowedRecipientDomains).toEqual(['example.com', 'partner.org']);
+  });
+
   it('loads a valid environment with defaults', () => {
     const c = loadConfig(testEnv());
     expect(c.publicUrl.href).toBe('http://localhost:3000/');
@@ -11,6 +16,7 @@ describe('loadConfig', () => {
     expect(c.allowedEmailDomains).toEqual([]);
     expect(c.allowPrivateHosts).toBe(false);
     expect(c.defaultSendLimitPerHour).toBe(20);
+    expect(c.allowedRecipientDomains).toEqual([]);
     expect(c.dataDir).toBe('/data');
     expect(c.port).toBe(3000);
     expect(c.isProduction).toBe(false);

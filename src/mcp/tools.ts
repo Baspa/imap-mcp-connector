@@ -11,7 +11,7 @@ import { MailError, toMailError } from '../mail/errors.js';
 import { wrapUntrusted } from '../mail/format.js';
 import { deleteMessages, moveMessages, setFlags } from '../mail/ops/actions.js';
 import { getAttachment } from '../mail/ops/attachment.js';
-import { listFolders, resolveFolder, resolveRole } from '../mail/ops/folders.js';
+import { listFolders, resolveFolder, resolveRole, type FolderRole } from '../mail/ops/folders.js';
 import { getMessage } from '../mail/ops/message.js';
 import { searchMessages } from '../mail/ops/search.js';
 import { getThread } from '../mail/ops/thread.js';
@@ -100,22 +100,29 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
     pool: ctx.pool,
     smtpFactory: ctx.smtpFactory,
     defaultSendLimitPerHour: ctx.config.defaultSendLimitPerHour,
+    allowedRecipientDomains: ctx.config.allowedRecipientDomains,
     signInUrl: signInUrl(ctx.config),
     guard: ctx.mailGuard,
   };
   const imap = <T>(user: User, fn: (client: ImapFlow) => Promise<T>) => ctx.pool.withImap(user, fn);
 
-  /** Moving to Trash is what delete_messages does, so it needs the same level. */
+  /**
+   * Below "full", mail may only be filed where it stays visible. Trash deletes it, and Junk is emptied on a
+   * schedule by many providers, so either one lets a successful prompt injection make mail disappear quietly.
+   */
   async function assertMayMoveTo(client: ImapFlow, user: User, destination: string): Promise<void> {
     if (allows(user.permissionLevel, 'full')) return;
-    const trash = await resolveRole(client, 'trash').catch((err: unknown) => {
-      if (err instanceof MailError && err.code === 'NOT_FOUND') return null;
-      throw err;
-    });
-    if (trash !== null && (await resolveFolder(client, destination)) === trash) {
+    const roleFolder = async (role: FolderRole) =>
+      resolveRole(client, role).catch((err: unknown) => {
+        if (err instanceof MailError && err.code === 'NOT_FOUND') return null;
+        throw err;
+      });
+    const target = await resolveFolder(client, destination);
+    const allowed = (await Promise.all([roleFolder('inbox'), roleFolder('archive')])).filter((f) => f !== null);
+    if (!allowed.includes(target)) {
       throw new MailError(
         'PERMISSION_DENIED',
-        `Moving messages to Trash deletes them, which needs the "full" permission level; the current level is "${user.permissionLevel}". The user can change it at ${settingsUrl}.`,
+        `At the "${user.permissionLevel}" permission level, messages can only be moved to Inbox or Archive, so that nothing is hidden or deleted. "${destination}" is neither. The user can change the level at ${settingsUrl}.`,
       );
     }
   }
@@ -181,7 +188,7 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
     );
     server.registerTool(
       'move_messages',
-      { title: 'Move messages', description: 'Move messages to another folder. Use destination "archive" to archive. Moving to Trash needs the full permission level.', inputSchema: moveShape, annotations: WRITE },
+      { title: 'Move messages', description: 'Move messages to another folder. Use destination "archive" to archive. Below the full permission level, only Inbox and Archive are allowed as destinations.', inputSchema: moveShape, annotations: WRITE },
       guarded<Args<typeof moveShape>>('move_messages', 'draft', false, (user, a) =>
         imap(user, async (c) => {
           await assertMayMoveTo(c, user, a.destination);

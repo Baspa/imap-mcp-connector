@@ -29,6 +29,8 @@ export interface OutgoingDeps {
   pool: MailPool;
   smtpFactory: SmtpFactory;
   defaultSendLimitPerHour: number;
+  /** Domains the AI may send to. Empty means no restriction. */
+  allowedRecipientDomains: string[];
   signInUrl: string;
   /** Re-checks the instance allowlist and network rules before connecting to SMTP; throws GuardError to refuse. */
   guard?: (user: User) => Promise<PinnedAddresses | void>;
@@ -92,9 +94,28 @@ async function deliver(deps: OutgoingDeps, user: User, req: ComposeRequest, now:
   return input;
 }
 
+/**
+ * An email that reaches the model can talk it into sending. Where a deployment lists recipient domains,
+ * that turns a successful injection into a refused tool call instead of mail leaving the organisation.
+ */
+function assertRecipientsAllowed(allowed: string[], recipients: string[]): void {
+  if (allowed.length === 0) return;
+  const refused = recipients.filter((address) => {
+    const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase();
+    return !allowed.includes(domain);
+  });
+  if (refused.length > 0) {
+    throw new MailError(
+      'PERMISSION_DENIED',
+      `This connector may only send to ${allowed.join(', ')}. Refused: ${refused.join(', ')}.`,
+    );
+  }
+}
+
 export async function sendEmail(deps: OutgoingDeps, user: User, req: ComposeRequest) {
   const now = deps.now?.() ?? Date.now();
   if (req.to.length === 0) throw new MailError('INVALID_INPUT', 'At least one "to" recipient is required.');
+  assertRecipientsAllowed(deps.allowedRecipientDomains, [...req.to, ...(req.cc ?? []), ...(req.bcc ?? [])]);
 
   const limit = user.sendLimitPerHour ?? deps.defaultSendLimitPerHour;
   const recent = sendsSince(deps.db, user.id, now - HOUR);

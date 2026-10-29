@@ -11,7 +11,7 @@ import { TEST_KEY } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
 function setup(
-  opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean; guard?: (user: User) => Promise<PinnedAddresses | void> } = {},
+  opts: { smtpError?: Error; limit?: number; smtpDelayMs?: number; autoSavesSent?: boolean; guard?: (user: User) => Promise<PinnedAddresses | void>; allowedRecipientDomains?: string[] } = {},
 ) {
   const db = testDb();
   const user = createTestUser(db, { email: 'alice@x.org', password: 'imap-pw', autoSavesSent: opts.autoSavesSent ?? true });
@@ -39,6 +39,7 @@ function setup(
   const deps: OutgoingDeps = {
     db, key: TEST_KEY, pool, smtpFactory, defaultSendLimitPerHour: opts.limit ?? 20,
     signInUrl: 'https://m.example.com/login', now: () => now, guard: opts.guard,
+    allowedRecipientDomains: opts.allowedRecipientDomains ?? [],
   };
   return { db, user, deps, sent, targets, advance: (ms: number) => (now += ms) };
 }
@@ -129,5 +130,34 @@ describe('sendEmail', () => {
     await expect(sendEmail(deps, user, { to: [], subject: 'x', body: 'x' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     await expect(sendEmail(deps, user, { to: ['b@y.org'], body: 'x' })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     expect(sendsSince(db, user.id, 0).count).toBe(0);
+  });
+});
+
+describe('sendEmail with a recipient allowlist', () => {
+  it('sends to a listed domain', async () => {
+    const { user, deps, sent } = setup({ allowedRecipientDomains: ['y.org'] });
+    await sendEmail(deps, user, { to: ['bob@y.org'], subject: 'Hi', body: 'Hello' });
+    expect(sent[0].envelope.to).toEqual(['bob@y.org']);
+  });
+
+  it('refuses a recipient outside the listed domains and does not use a send slot', async () => {
+    const { db, user, deps, sent } = setup({ allowedRecipientDomains: ['y.org'] });
+    await expect(sendEmail(deps, user, { to: ['attacker@evil.example'], subject: 'Hi', body: 'Hello' }))
+      .rejects.toThrow(/evil\.example/);
+    expect(sent).toHaveLength(0);
+    expect(sendsSince(db, user.id, 0).count).toBe(0);
+  });
+
+  it('checks cc and bcc too, so one listed recipient cannot carry the rest', async () => {
+    const { user, deps, sent } = setup({ allowedRecipientDomains: ['y.org'] });
+    await expect(sendEmail(deps, user, { to: ['bob@y.org'], bcc: ['attacker@evil.example'], subject: 'Hi', body: 'Hello' }))
+      .rejects.toThrow(/evil\.example/);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('sends anywhere when no domains are listed', async () => {
+    const { user, deps, sent } = setup();
+    await sendEmail(deps, user, { to: ['anyone@elsewhere.example'], subject: 'Hi', body: 'Hello' });
+    expect(sent[0].envelope.to).toEqual(['anyone@elsewhere.example']);
   });
 });
