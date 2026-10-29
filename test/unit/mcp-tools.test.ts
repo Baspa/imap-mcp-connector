@@ -38,4 +38,16 @@ describe('registerTools', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toMatch(/^PERMISSION_DENIED: .*http:\/\/localhost:3000\/settings/);
   });
+
+  it('marks folder names as untrusted, because the mail server chooses them', async () => {
+    const db = testDb();
+    const user = createTestUser(db, { permissionLevel: 'read' });
+    const handlers = new Map<string, Handler>();
+    const fake = { registerTool: (name: string, _config: unknown, cb: Handler) => handlers.set(name, cb) } as unknown as McpServer;
+    const pool = { withImap: async () => [{ path: 'INBOX', role: 'inbox' }] } as unknown as MailPool;
+    registerTools(fake, { db, config: testConfig(), pool, smtpFactory: defaultSmtpFactory, userId: user.id }, 'read');
+
+    const result = await handlers.get('list_folders')!({});
+    expect(result.content[0].text).toMatch(/^<untrusted_email_content id="[0-9a-f]{16}">/);
+  });
 });

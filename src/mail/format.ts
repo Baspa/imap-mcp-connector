@@ -14,6 +14,26 @@ export function htmlToText(html: string): string {
   });
 }
 
+/** Lines shorter than this are greetings, signatures and separators: too common to be worth flagging. */
+const MIN_DIVERGING_LINE = 25;
+
+function comparable(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Whether the plain-text part says something the HTML part does not. Mail programs show the HTML part
+ * while this connector reads text/plain, so a sender can put instructions where only the model looks.
+ */
+export function plainTextDiffersFromHtml(plain: string, htmlText: string): boolean {
+  const htmlWords = comparable(htmlText);
+  return plain
+    .split(/\r?\n/)
+    .map(comparable)
+    .filter((line) => line.length >= MIN_DIVERGING_LINE)
+    .some((line) => !htmlWords.includes(line));
+}
+
 export function truncateUtf8(text: string, maxBytes = MAX_BODY_BYTES): { text: string; truncated: boolean } {
   const buf = Buffer.from(text, 'utf8');
   if (buf.length <= maxBytes) return { text, truncated: false };

@@ -145,8 +145,8 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
   if (allows(level, 'read')) {
     server.registerTool(
       'list_folders',
-      { title: 'List folders', description: 'List mailbox folders with their role (inbox, sent, drafts, trash, archive, junk) and total/unread counts.', inputSchema: {}, annotations: READ },
-      guarded<Record<string, never>>('list_folders', 'read', false, (user) => imap(user, (c) => listFolders(c))),
+      { title: 'List folders', description: `List mailbox folders with their role (inbox, sent, drafts, trash, archive, junk) and total/unread counts.${UNTRUSTED_NOTE}`, inputSchema: {}, annotations: READ },
+      guarded<Record<string, never>>('list_folders', 'read', true, (user) => imap(user, (c) => listFolders(c))),
     );
     server.registerTool(
       'search_messages',

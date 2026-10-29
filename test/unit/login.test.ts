@@ -83,6 +83,24 @@ describe('login', () => {
     expect(r.status).toBe('error');
   });
 
+  it('counts IPv6 addresses in the same /64 as one client', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong', ip: `2001:db8:1:2::${i + 1}` });
+    }
+    const r = await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:1:2::ffff' });
+    expect(r.status).toBe('error');
+  });
+
+  it('keeps separate counts for different IPv6 /64 ranges', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong', ip: `2001:db8:1:2::${i + 1}` });
+    }
+    const r = await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:9:9::1' });
+    expect(r.status).toBe('ok');
+  });
+
   it('asks for manual settings when discovery finds nothing, then uses a listed server', async () => {
     const d = deps({ discover: vi.fn(async () => null), config: testConfig({ ALLOWED_IMAP_HOSTS: 'mail.custom.org' }) });
     expect((await login(d, input)).status).toBe('needs_settings');
@@ -170,6 +188,16 @@ describe('login', () => {
     const r = await login(d, { ...input, ip: '9.9.9.9' });
     expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
     expect(d.discover).toHaveBeenCalledTimes(5);
+  });
+
+  it('counts discovery lookups per IPv6 /64, not per address', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    for (let i = 0; i < 20; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, ip: `2001:db8:5:5::${i + 1}` });
+    }
+    expect(d.discover).toHaveBeenCalledTimes(20);
+    await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:5:5::ffff' });
+    expect(d.discover).toHaveBeenCalledTimes(20);
   });
 
   it('does not run discovery for a rate-limited IP', async () => {

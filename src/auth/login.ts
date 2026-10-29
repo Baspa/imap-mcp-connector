@@ -1,3 +1,4 @@
+import ipaddr from 'ipaddr.js';
 import type { Config } from '../config.js';
 import { encryptSecret } from '../crypto.js';
 import { deleteLoginAttempt, loginFailuresSince, recordLoginFailure } from '../db/counters.js';
@@ -44,6 +45,23 @@ const UNAPPROVED_SMTP =
 const BAD_CREDENTIALS =
   'Email or password incorrect. Many providers (Gmail, iCloud, Yahoo) require an app password instead of your normal password.';
 
+/**
+ * Rate-limit bucket for a client address. A single customer is routinely handed a whole IPv6 /64, so
+ * keying on the full address would give one attacker as many attempts as they have addresses.
+ */
+export function rateLimitScope(ip: string): string {
+  let parsed: ipaddr.IPv4 | ipaddr.IPv6;
+  try {
+    parsed = ipaddr.parse(ip);
+  } catch {
+    return ip;
+  }
+  if (parsed.kind() !== 'ipv6') return parsed.toNormalizedString();
+  const v6 = parsed as ipaddr.IPv6;
+  if (v6.isIPv4MappedAddress()) return v6.toIPv4Address().toNormalizedString();
+  return `${v6.toByteArray().slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('')}/64`;
+}
+
 export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginResult> {
   const email = normalizeEmail(input.email);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !input.password) {
@@ -51,7 +69,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   }
   const now = deps.now?.() ?? Date.now();
   const since = now - WINDOW_MS;
-  const ipKey = `ip:${input.ip}`;
+  const ipKey = `ip:${rateLimitScope(input.ip)}`;
   const emailKey = `email:${email}`;
 
   // Checked before discovery so throttled clients cannot make the server hammer ISPDB/DNS.
@@ -155,7 +173,7 @@ type DiscoverOutcome = { ok: true; settings: MailServerSettings | null } | { ok:
 
 /** Runs discovery under the per-IP discovery limit, turning a failed lookup into a "try again" result. */
 async function rateLimitedDiscover(deps: LoginDeps, ip: string, email: string, now: number, since: number): Promise<DiscoverOutcome> {
-  const discoverKey = `discover:${ip}`;
+  const discoverKey = `discover:${rateLimitScope(ip)}`;
   if (loginFailuresSince(deps.db, discoverKey, since) >= MAX_DISCOVERIES_PER_IP) {
     return { ok: false, result: { status: 'error', message: TOO_MANY } };
   }
