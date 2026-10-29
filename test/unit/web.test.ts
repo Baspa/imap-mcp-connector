@@ -79,6 +79,20 @@ describe('web', () => {
     expect(findUserByEmail(deps.db, 'a@custom.org')).toMatchObject({ imapHost: 'mail.custom.org', smtpPort: 587 });
   });
 
+  it('refuses a non-mail port in manual settings, so the connector cannot be used to probe ports', async () => {
+    const { app, deps } = testApp({ discover: async () => null }, { ALLOWED_IMAP_HOSTS: 'mail.custom.org' });
+    const agent = request.agent(app);
+    const page = await agent.get('/login');
+    const first = await agent.post('/login').type('form').send({ _csrf: csrfFrom(page.text), email: 'a@custom.org', password: 'right' });
+    const second = await agent.post('/login').type('form').send({
+      _csrf: csrfFrom(first.text), email: 'a@custom.org', password: 'right',
+      imap_host: 'mail.custom.org', imap_port: '22', imap_security: 'tls',
+      smtp_host: 'mail.custom.org', smtp_port: '587', smtp_security: 'starttls',
+    });
+    expect(second.status).toBe(400);
+    expect(findUserByEmail(deps.db, 'a@custom.org')).toBeUndefined();
+  });
+
   it('honors a safe next URL and ignores unsafe ones', async () => {
     const { app } = testApp();
     const agent = request.agent(app);

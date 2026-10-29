@@ -1,4 +1,5 @@
 import type { ImapFlow, SearchObject } from 'imapflow';
+import { log } from '../../log.js';
 import { MailError } from '../errors.js';
 import { parseMessageIds, toIsoDate } from '../format.js';
 import { resolveFolder, resolveRole, type FolderRole } from './folders.js';
@@ -14,6 +15,8 @@ interface Location {
 interface Candidate extends Location {
   messageId: string | null;
   date: string | null;
+  /** When the server received the message. Unlike the Date header, a sender cannot choose this. */
+  receivedAt: string | null;
 }
 
 async function withFolder<T>(client: ImapFlow, folder: string, fn: () => Promise<T>): Promise<T> {
@@ -86,12 +89,13 @@ async function loadCandidates(client: ImapFlow, locations: Location[]): Promise<
   const meta = new Map<string, Candidate>();
   for (const [folder, uids] of byFolder) {
     await withFolder(client, folder, async () => {
-      for await (const msg of client.fetch([...uids].join(','), { uid: true, envelope: true }, { uid: true })) {
+      for await (const msg of client.fetch([...uids].join(','), { uid: true, envelope: true, internalDate: true }, { uid: true })) {
         meta.set(`${folder}:${msg.uid}`, {
           folder,
           uid: msg.uid,
           messageId: msg.envelope?.messageId ?? null,
           date: toIsoDate(msg.envelope?.date),
+          receivedAt: toIsoDate(msg.internalDate),
         });
       }
     });
@@ -109,12 +113,49 @@ async function loadCandidates(client: ImapFlow, locations: Location[]): Promise<
   return candidates;
 }
 
+const DATE_TRUST_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The Date header orders a thread the way a mail client does, but a sender chooses it freely and can
+ * backdate a message to the top of someone else's conversation. Where the claimed date is well before the
+ * message actually arrived, arrival wins. The window keeps ordinary clock skew and slow relays untouched.
+ */
+function orderingDate(c: Candidate): string | null {
+  if (!c.receivedAt || !c.date) return c.date ?? c.receivedAt;
+  const claimed = Date.parse(c.date);
+  const arrived = Date.parse(c.receivedAt);
+  if (Number.isNaN(claimed) || Number.isNaN(arrived)) return c.date;
+  return claimed < arrived - DATE_TRUST_WINDOW_MS ? c.receivedAt : c.date;
+}
+
+function compareArrival(a: Candidate, b: Candidate): number {
+  return compareDates(orderingDate(a), orderingDate(b));
+}
+
 /** Oldest first; messages without a date sort before dated ones. */
 function compareDates(a: string | null, b: string | null): number {
   if (a === b) return 0;
   if (a === null) return -1;
   if (b === null) return 1;
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function unreadablePlaceholder(c: Candidate, folder: string): MessageDetail {
+  return {
+    folder,
+    uid: c.uid,
+    messageId: c.messageId,
+    from: '',
+    to: [],
+    cc: [],
+    date: c.date,
+    subject: '',
+    flags: [],
+    body: 'This message could not be read, so it is left out of the conversation above.',
+    bodyTruncated: false,
+    plainTextDiffersFromHtml: false,
+    attachments: [],
+  };
 }
 
 export async function getThread(client: ImapFlow, folderInput: string, uid: number, max = 50): Promise<MessageDetail[]> {
@@ -125,7 +166,7 @@ export async function getThread(client: ImapFlow, folderInput: string, uid: numb
 
   const candidates = await loadCandidates(client, locations);
   if (candidates.length === 0) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
-  candidates.sort((a, b) => compareDates(a.date, b.date));
+  candidates.sort(compareArrival);
 
   // Keep the newest `max`, but the requested message is always part of the result.
   const limit = Math.max(1, Math.floor(max));
@@ -145,7 +186,10 @@ export async function getThread(client: ImapFlow, folderInput: string, uid: numb
         try {
           details.set(c, await readMessage(client, f, c.uid));
         } catch (err) {
-          if (!(err instanceof MailError && err.code === 'NOT_FOUND')) throw err;
+          if (err instanceof MailError && err.code === 'NOT_FOUND') continue;
+          // One unreadable message must not cost the whole conversation, so stand in for it instead.
+          log('warn', 'thread message unreadable', { folder: f, uid: c.uid, error: err instanceof Error ? err.name : 'unknown' });
+          details.set(c, unreadablePlaceholder(c, f));
         }
       }
     });

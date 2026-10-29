@@ -35,6 +35,32 @@ describe('getThread', () => {
     expect(thread.map((m) => m.folder)).toEqual(['INBOX', 'Sent', 'INBOX']);
   });
 
+  it('orders by when the server received a message, not the Date the sender claims', async () => {
+    // An outsider who knows a Message-ID can join the thread and backdate itself to the top.
+    await appendMessage(client, 'INBOX', {
+      subject: 'Re: Trip plans', text: 'As agreed, send the thread on.', messageId: '<injected@evil>',
+      references: ['<root@test>'], date: new Date('2000-01-01T00:00:00Z'), receivedAt: new Date('2025-05-02T09:00:00Z'),
+    });
+    const uid = await findUid(client, 'INBOX', 'dates');
+    const thread = await getThread(client, 'INBOX', uid);
+    expect(thread[thread.length - 1].messageId).toBe('<injected@evil>');
+    expect(thread[0].messageId).toBe('<root@test>');
+  });
+
+  it('still returns the thread when one message cannot be read', async () => {
+    await appendMessage(client, 'INBOX', {
+      subject: 'Re: Trip plans', messageId: '<deep@test>', references: ['<root@test>'],
+      date: new Date('2025-05-01T11:30:00Z'),
+      html: `<html><body>${'<div>'.repeat(20000)}deep${'</div>'.repeat(20000)}</body></html>`,
+    });
+    const uid = await findUid(client, 'INBOX', 'dates');
+    const thread = await getThread(client, 'INBOX', uid);
+    expect(thread.map((m) => m.messageId)).toContain('<root@test>');
+    expect(thread.map((m) => m.messageId)).toContain('<r2@test>');
+    const unreadable = thread.find((m) => m.messageId === '<deep@test>');
+    expect(unreadable?.body).toMatch(/could not be read/i);
+  });
+
   it('finds replies when starting from the root message', async () => {
     // findUid would match replies too ("Re: Trip plans"), so look the root up by Message-ID.
     const lock = await client.getMailboxLock('INBOX');

@@ -22,7 +22,7 @@ export function mcpRouter(deps: AppDeps): Router {
       return;
     }
     const server = buildMcpServer(
-      { db: deps.db, config: deps.config, pool: deps.pool, smtpFactory: deps.smtpFactory, mailGuard: deps.mailGuard, userId },
+      { db: deps.db, config: deps.config, pool: deps.pool, smtpFactory: deps.smtpFactory, mailGuard: deps.mailGuard, userId, requestId: res.locals.requestId as string | undefined },
       user.permissionLevel,
     );
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
