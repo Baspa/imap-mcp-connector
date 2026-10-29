@@ -69,7 +69,7 @@ const flagsShape = {
   add: z.array(z.enum(['seen', 'flagged'])).default([]),
   remove: z.array(z.enum(['seen', 'flagged'])).default([]),
 };
-const moveShape = { folder, uids, destination: z.string().min(1).describe('Folder path, or a role: archive, inbox, junk') };
+const moveShape = { folder, uids, destination: z.string().min(1).describe('Folder path, or a role: archive, inbox. Below the full permission level only those two are accepted.') };
 const deleteShape = { folder, uids };
 const composeShape = {
   to: addresses.describe('Recipient email addresses'),
