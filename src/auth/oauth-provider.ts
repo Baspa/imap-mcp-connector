@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Response } from 'express';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import { InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import { InvalidClientError, InvalidGrantError, InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { AuthorizationParams, OAuthServerProvider } from '@modelcontextprotocol/sdk/server/auth/provider.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type {
@@ -22,17 +22,57 @@ export const PENDING_TTL_MS = 10 * 60 * 1000;
 
 type RegisterClientInput = Parameters<NonNullable<OAuthRegisteredClientsStore['registerClient']>>[0];
 
+/** True when `host` is the listed host or a subdomain of it, so "notclaude.ai" never matches "claude.ai". */
+function hostMatches(host: string, allowed: string): boolean {
+  return host === allowed || host.endsWith(`.${allowed}`);
+}
+
 export class SqliteOAuthProvider implements OAuthServerProvider {
   constructor(
     private readonly db: Db,
     private readonly now: () => number = Date.now,
+    /** Hosts that may receive an authorization code. Empty means any, as dynamic registration intends. */
+    private readonly allowedRedirectHosts: string[] = [],
   ) {}
+
+  /**
+   * Registration is open by design, and the consent page shows the client's own name, so a client calling
+   * itself "ChatGPT" can point at a look-alike host. Listing hosts makes that a refusal rather than a
+   * decision the user has to get right while reading a redirect URI.
+   */
+  private assertRedirectHostsAllowed(redirectUris: unknown): void {
+    if (this.allowedRedirectHosts.length === 0) return;
+    const uris = Array.isArray(redirectUris) ? redirectUris : [];
+    for (const uri of uris) {
+      let parsed: URL;
+      try {
+        parsed = new URL(String(uri));
+      } catch {
+        throw new InvalidClientError(`Redirect URI "${String(uri)}" is not a valid URL.`);
+      }
+      // Hostname, not host: the port does not change who receives the code, but the scheme does. Any app can
+      // claim a custom scheme such as com.example://, so a familiar-looking host under one proves nothing.
+      const host = parsed.hostname.toLowerCase();
+      const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+      if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback)) {
+        throw new InvalidClientError(
+          `Redirect URI "${String(uri)}" must use https (http is accepted only for localhost).`,
+        );
+      }
+      if (!this.allowedRedirectHosts.some((allowed) => hostMatches(host, allowed))) {
+        throw new InvalidClientError(
+          `This connector only registers clients that redirect to ${this.allowedRedirectHosts.join(', ')}. "${host}" is not one of them.`,
+        );
+      }
+    }
+  }
 
   get clientsStore(): OAuthRegisteredClientsStore {
     return {
       getClient: (clientId: string) => getClient(this.db, clientId),
       registerClient: (client: RegisterClientInput) => {
         const given = client as Partial<OAuthClientInformationFull>;
+        this.assertRedirectHostsAllowed(given.redirect_uris);
         const full: OAuthClientInformationFull = {
           ...client,
           client_id: given.client_id ?? randomUUID(),
@@ -116,8 +156,13 @@ export class SqliteOAuthProvider implements OAuthServerProvider {
       throw new InvalidGrantError('Invalid or expired authorization code');
     }
     if (redirectUri && redirectUri !== code.redirectUri) throw new InvalidGrantError('redirect_uri does not match');
-    if (!markCodeUsed(this.db, hash)) throw new InvalidGrantError('Authorization code already used');
-    return this.issue(code.clientId, code.userId, code.scopes, randomUUID());
+    const grantId = randomUUID();
+    if (!markCodeUsed(this.db, hash, grantId)) {
+      // Someone else has this code. Whatever the first redemption issued is no longer trustworthy.
+      if (code.grantId) revokeGrant(this.db, code.grantId, this.now());
+      throw new InvalidGrantError('Authorization code already used');
+    }
+    return this.issue(code.clientId, code.userId, code.scopes, grantId);
   }
 
   async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string): Promise<OAuthTokens> {

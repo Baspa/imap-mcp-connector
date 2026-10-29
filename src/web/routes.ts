@@ -7,6 +7,7 @@ import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
 import { GuardError, isAllowedSmtpHost } from '../guard.js';
+import { SESSION_TTL_MS } from '../app.js';
 import { log } from '../log.js';
 import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
@@ -16,13 +17,17 @@ import { requireUser, safeNext } from './middleware.js';
 type Body = Record<string, string | undefined>;
 const SECURITIES: Security[] = ['tls', 'starttls', 'none'];
 
-const isPort = (n: number) => Number.isInteger(n) && n > 0 && n < 65536;
+// Hand-entered settings make the server connect where the visitor says, so only real mail ports are
+// accepted; any port would turn sign-in into a port scanner against third parties.
+const IMAP_PORTS = [993, 143];
+const SMTP_PORTS = [465, 587, 25, 2525];
+const isPort = (n: number, allowed: number[]) => allowed.includes(n);
 const isSecurity = (s: string | undefined): s is Security => SECURITIES.includes(s as Security);
 
 function parseManual(b: Body): MailServerSettings | undefined {
   const imapPort = Number(b.imap_port);
   const smtpPort = Number(b.smtp_port);
-  if (!b.imap_host?.trim() || !b.smtp_host?.trim() || !isPort(imapPort) || !isPort(smtpPort)) return undefined;
+  if (!b.imap_host?.trim() || !b.smtp_host?.trim() || !isPort(imapPort, IMAP_PORTS) || !isPort(smtpPort, SMTP_PORTS)) return undefined;
   if (!isSecurity(b.imap_security) || !isSecurity(b.smtp_security)) return undefined;
   return {
     imapHost: b.imap_host.trim(),
@@ -112,6 +117,7 @@ export function webRouter(deps: AppDeps): Router {
     }
     await new Promise<void>((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
     req.session.userId = result.user.id;
+    req.session.cookie.maxAge = SESSION_TTL_MS;
     res.redirect(next);
   });
 
@@ -132,7 +138,7 @@ export function webRouter(deps: AppDeps): Router {
     const user = res.locals.user as User;
     const b = req.body as Body;
     const smtpPort = Number(b.smtp_port);
-    if (!b.smtp_host?.trim() || !isPort(smtpPort) || !isSecurity(b.smtp_security) || !b.smtp_username?.trim()) {
+    if (!b.smtp_host?.trim() || !isPort(smtpPort, SMTP_PORTS) || !isSecurity(b.smtp_security) || !b.smtp_username?.trim()) {
       return renderSettings(deps, req, res, 'Check the SMTP settings.', 400);
     }
     const smtp = { smtpHost: b.smtp_host.trim(), smtpPort, smtpSecurity: b.smtp_security };

@@ -1,11 +1,14 @@
+import ipaddr from 'ipaddr.js';
 import type { Config } from '../config.js';
-import { encryptSecret } from '../crypto.js';
+import { decryptSecret, encryptSecret } from '../crypto.js';
 import { deleteLoginAttempt, loginFailuresSince, recordLoginFailure } from '../db/counters.js';
 import type { Db } from '../db/index.js';
 import {
   createUser, findUserByEmail, findUserById, normalizeEmail, recordLogin, serverSettingsOf, setSettingsSource, type User,
 } from '../db/users.js';
+import { revokeAllUserGrants } from '../db/oauth.js';
 import { DiscoveryUnavailableError } from '../discovery/index.js';
+import { audit } from '../log.js';
 import { GuardError, isAllowedSmtpHost, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
 import type { MailServerSettings, SettingsSource } from '../types.js';
@@ -44,6 +47,33 @@ const UNAPPROVED_SMTP =
 const BAD_CREDENTIALS =
   'Email or password incorrect. Many providers (Gmail, iCloud, Yahoo) require an app password instead of your normal password.';
 
+/**
+ * Rate-limit bucket for a client address. A single customer is routinely handed a whole IPv6 /64, so
+ * keying on the full address would give one attacker as many attempts as they have addresses.
+ */
+export function rateLimitScope(ip: string): string {
+  let parsed: ipaddr.IPv4 | ipaddr.IPv6;
+  try {
+    parsed = ipaddr.parse(ip);
+  } catch {
+    // One shared bucket: an unparsable value is spoofed or unknown, and must not mint a fresh allowance.
+    return 'unparsed';
+  }
+  if (parsed.kind() !== 'ipv6') return parsed.toNormalizedString();
+  const v6 = parsed as ipaddr.IPv6;
+  if (v6.isIPv4MappedAddress()) return v6.toIPv4Address().toNormalizedString();
+  return `${v6.toByteArray().slice(0, 8).map((b) => b.toString(16).padStart(2, '0')).join('')}/64`;
+}
+
+/** The password currently stored for a user, or null when it cannot be read with this key. */
+function storedPassword(deps: LoginDeps, user: User): string | null {
+  try {
+    return decryptSecret(deps.config.encryptionKey, user.imapPasswordEnc);
+  } catch {
+    return null;
+  }
+}
+
 export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginResult> {
   const email = normalizeEmail(input.email);
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email) || !input.password) {
@@ -51,7 +81,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   }
   const now = deps.now?.() ?? Date.now();
   const since = now - WINDOW_MS;
-  const ipKey = `ip:${input.ip}`;
+  const ipKey = `ip:${rateLimitScope(input.ip)}`;
   const emailKey = `email:${email}`;
 
   // Checked before discovery so throttled clients cannot make the server hammer ISPDB/DNS.
@@ -59,6 +89,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     loginFailuresSince(deps.db, ipKey, since) >= MAX_FAILURES_PER_IP ||
     loginFailuresSince(deps.db, emailKey, since) >= MAX_FAILURES_PER_EMAIL
   ) {
+    audit('sign_in_failed', { email, reason: 'rate_limited' });
     return { status: 'error', message: TOO_MANY };
   }
 
@@ -118,6 +149,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   ) {
     deleteLoginAttempt(deps.db, ipAttemptId);
     deleteLoginAttempt(deps.db, emailAttemptId);
+    audit('sign_in_failed', { email, reason: 'rate_limited' });
     return { status: 'error', message: TOO_MANY };
   }
 
@@ -131,6 +163,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     return { status: 'error', message: "Couldn't reach your mail server. Check the settings or try again shortly." };
   }
   if (result === 'bad_credentials') {
+    audit('sign_in_failed', { email, reason: 'bad_credentials' });
     return { status: 'error', message: BAD_CREDENTIALS };
   }
 
@@ -139,7 +172,15 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
 
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
+    // A changed mail password is how someone locks a mailbox down, so connected AI apps must lose access too.
+    // An unreadable stored password is a key rotation, not a change, and must not revoke everyone's apps.
+    const stored = storedPassword(deps, existing);
+    if (stored !== null && stored !== input.password) {
+      revokeAllUserGrants(deps.db, existing.id, now);
+      audit('grants_revoked', { userId: existing.id, email, reason: 'password_changed' });
+    }
     recordLogin(deps.db, existing.id, passwordEnc, now);
+    audit('sign_in', { userId: existing.id, email, isNew: false });
     if (source !== existing.settingsSource) setSettingsSource(deps.db, existing.id, source);
     return { status: 'ok', user: findUserById(deps.db, existing.id)!, isNew: false };
   }
@@ -148,6 +189,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     { ...settings, email, smtpUsername: email, imapPasswordEnc: passwordEnc, settingsSource: source === 'manual' ? 'manual' : 'discovered' },
     now,
   );
+  audit('sign_in', { userId: user.id, email, isNew: true });
   return { status: 'ok', user, isNew: true };
 }
 
@@ -155,7 +197,7 @@ type DiscoverOutcome = { ok: true; settings: MailServerSettings | null } | { ok:
 
 /** Runs discovery under the per-IP discovery limit, turning a failed lookup into a "try again" result. */
 async function rateLimitedDiscover(deps: LoginDeps, ip: string, email: string, now: number, since: number): Promise<DiscoverOutcome> {
-  const discoverKey = `discover:${ip}`;
+  const discoverKey = `discover:${rateLimitScope(ip)}`;
   if (loginFailuresSince(deps.db, discoverKey, since) >= MAX_DISCOVERIES_PER_IP) {
     return { ok: false, result: { status: 'error', message: TOO_MANY } };
   }

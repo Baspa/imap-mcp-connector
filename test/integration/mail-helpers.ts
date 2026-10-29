@@ -60,6 +60,8 @@ export interface SeedMessage {
   text?: string;
   html?: string;
   date?: Date;
+  /** INTERNALDATE, i.e. when the server received it. Defaults to `date`; set it apart to fake a backdated sender. */
+  receivedAt?: Date;
   messageId?: string;
   inReplyTo?: string;
   references?: string[];
@@ -83,7 +85,7 @@ export async function appendMessage(client: ImapFlow, folder: string, msg: SeedM
   const raw = await new Promise<Buffer>((resolve, reject) =>
     node.build((err, buf) => (err ? reject(err) : resolve(buf))),
   );
-  await client.append(folder, raw, msg.flags ?? [], msg.date);
+  await client.append(folder, raw, msg.flags ?? [], msg.receivedAt ?? msg.date);
 }
 
 export async function appendRaw(client: ImapFlow, folder: string, raw: Buffer): Promise<void> {

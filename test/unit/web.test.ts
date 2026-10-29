@@ -79,6 +79,33 @@ describe('web', () => {
     expect(findUserByEmail(deps.db, 'a@custom.org')).toMatchObject({ imapHost: 'mail.custom.org', smtpPort: 587 });
   });
 
+  it('refuses a non-mail port in manual settings, so the connector cannot be used to probe ports', async () => {
+    const { app, deps } = testApp({ discover: async () => null }, { ALLOWED_IMAP_HOSTS: 'mail.custom.org' });
+    const agent = request.agent(app);
+    const page = await agent.get('/login');
+    const first = await agent.post('/login').type('form').send({ _csrf: csrfFrom(page.text), email: 'a@custom.org', password: 'right' });
+    const second = await agent.post('/login').type('form').send({
+      _csrf: csrfFrom(first.text), email: 'a@custom.org', password: 'right',
+      imap_host: 'mail.custom.org', imap_port: '22', imap_security: 'tls',
+      smtp_host: 'mail.custom.org', smtp_port: '587', smtp_security: 'starttls',
+    });
+    expect(second.status).toBe(400);
+    expect(findUserByEmail(deps.db, 'a@custom.org')).toBeUndefined();
+  });
+
+  it('keeps an anonymous session short and extends it only after sign-in', async () => {
+    // GET /login mints a CSRF token, which creates a session row for anyone who asks for the page.
+    const { app, deps } = testApp();
+    const agent = request.agent(app);
+    await agent.get('/login');
+    const anon = deps.db.prepare('SELECT expires_at FROM sessions').get() as { expires_at: number };
+    expect(anon.expires_at - Date.now()).toBeLessThan(2 * 60 * 60 * 1000);
+
+    await signIn(agent);
+    const after = deps.db.prepare('SELECT expires_at FROM sessions ORDER BY expires_at DESC').get() as { expires_at: number };
+    expect(after.expires_at - Date.now()).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
+  });
+
   it('honors a safe next URL and ignores unsafe ones', async () => {
     const { app } = testApp();
     const agent = request.agent(app);

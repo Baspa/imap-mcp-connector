@@ -6,6 +6,7 @@ import { DiscoveryUnavailableError } from '../../src/discovery/index.js';
 import { GuardError } from '../../src/guard.js';
 import type { MailServerSettings } from '../../src/types.js';
 import type { VerifyResult } from '../../src/mail/imap.js';
+import { insertClient, insertToken, listActiveGrants } from '../../src/db/oauth.js';
 import { TEST_KEY, testConfig } from '../helpers/config.js';
 import { createTestUser, testDb } from '../helpers/db.js';
 
@@ -81,6 +82,24 @@ describe('login', () => {
     for (let i = 0; i < 10; i++) await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong' });
     const r = await login(d, { ...input, email: 'fresh@x.org' });
     expect(r.status).toBe('error');
+  });
+
+  it('counts IPv6 addresses in the same /64 as one client', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong', ip: `2001:db8:1:2::${i + 1}` });
+    }
+    const r = await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:1:2::ffff' });
+    expect(r.status).toBe('error');
+  });
+
+  it('keeps separate counts for different IPv6 /64 ranges', async () => {
+    const d = deps();
+    for (let i = 0; i < 10; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, password: 'wrong', ip: `2001:db8:1:2::${i + 1}` });
+    }
+    const r = await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:9:9::1' });
+    expect(r.status).toBe('ok');
   });
 
   it('asks for manual settings when discovery finds nothing, then uses a listed server', async () => {
@@ -170,6 +189,16 @@ describe('login', () => {
     const r = await login(d, { ...input, ip: '9.9.9.9' });
     expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
     expect(d.discover).toHaveBeenCalledTimes(5);
+  });
+
+  it('counts discovery lookups per IPv6 /64, not per address', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    for (let i = 0; i < 20; i++) {
+      await login(d, { ...input, email: `u${i}@x.org`, ip: `2001:db8:5:5::${i + 1}` });
+    }
+    expect(d.discover).toHaveBeenCalledTimes(20);
+    await login(d, { ...input, email: 'fresh@x.org', ip: '2001:db8:5:5::ffff' });
+    expect(d.discover).toHaveBeenCalledTimes(20);
   });
 
   it('does not run discovery for a rate-limited IP', async () => {
@@ -306,5 +335,57 @@ describe('login', () => {
     expect(r).toEqual({ status: 'error', message: expect.stringMatching(/Too many/) });
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     expect((d.verifyImap as any).mock.calls.length).toBe(10);
+  });
+});
+
+describe('login and connected AI apps', () => {
+  function grantFor(db: ReturnType<typeof testDb>, userId: number, now: number) {
+    insertClient(db, { client_id: 'c1', client_name: 'Test AI', redirect_uris: ['http://localhost/cb'] } as never, now);
+    insertToken(db, {
+      tokenHash: 'hash-refresh', kind: 'refresh', grantId: 'g1', clientId: 'c1',
+      userId, scopes: [], createdAt: now, expiresAt: now + 1_000_000,
+    });
+  }
+
+  it('revokes connected apps when the mail password changes', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    grantFor(db, user.id, 1_000_000);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
+
+    await login(d, { ...input, password: 'a-new-password' });
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(0);
+  });
+
+  it('keeps connected apps when the same password is used again', async () => {
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    grantFor(db, user.id, 1_000_000);
+
+    await login(d, input);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
+  });
+});
+
+describe('login when the stored password cannot be read', () => {
+  it('keeps connected apps instead of revoking them on every sign-in', async () => {
+    // After an ENCRYPTION_KEY rotation every stored password is unreadable; that is not a password change.
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    insertClient(db, { client_id: 'c9', client_name: 'AI', redirect_uris: ['http://localhost/cb'] } as never, 1_000_000);
+    insertToken(db, {
+      tokenHash: 'h9', kind: 'refresh', grantId: 'g9', clientId: 'c9',
+      userId: user.id, scopes: [], createdAt: 1_000_000, expiresAt: 2_000_000,
+    });
+    db.prepare('UPDATE users SET imap_password_enc = ? WHERE id = ?').run('not-decryptable', user.id);
+
+    await login(d, input);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
   });
 });

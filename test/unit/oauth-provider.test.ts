@@ -75,6 +75,20 @@ describe('SqliteOAuthProvider', () => {
     await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toBeInstanceOf(InvalidGrantError);
   });
 
+  it('revokes the tokens the code produced when the code is replayed', async () => {
+    // A replayed code means someone else has it, so the tokens it already issued cannot be trusted.
+    const { provider, user, db } = setup();
+    const client = await register(provider);
+    const code = await codeFor(provider, client, user.id);
+    const tokens = await provider.exchangeAuthorizationCode(client, code, undefined, client.redirect_uris[0]);
+    expect(await provider.verifyAccessToken(tokens.access_token)).toBeTruthy();
+
+    await expect(provider.exchangeAuthorizationCode(client, code)).rejects.toBeInstanceOf(InvalidGrantError);
+
+    await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toBeInstanceOf(InvalidTokenError);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(0);
+  });
+
   it('rejects codes from another client, expired codes and wrong redirect URIs', async () => {
     const { provider, user, advance } = setup();
     const client = await register(provider);
@@ -126,5 +140,59 @@ describe('SqliteOAuthProvider', () => {
     expect(url.searchParams.get('error')).toBe('access_denied');
     expect(url.searchParams.get('state')).toBe('st');
     expect(provider.describePending(id)).toBeNull();
+  });
+});
+
+describe('client registration and redirect hosts', () => {
+  function providerWith(hosts: string[]): SqliteOAuthProvider {
+    return new SqliteOAuthProvider(testDb(), () => 1_000_000, hosts);
+  }
+
+  async function registerWith(provider: SqliteOAuthProvider, redirectUris: string[]) {
+    return provider.clientsStore.registerClient!({
+      redirect_uris: redirectUris,
+      client_name: 'ChatGPT',
+      token_endpoint_auth_method: 'none',
+    } as OAuthClientInformationFull);
+  }
+
+  it('accepts any redirect host when no hosts are listed', async () => {
+    const client = await registerWith(providerWith([]), ['https://anything.example/cb']);
+    expect(client.redirect_uris).toEqual(['https://anything.example/cb']);
+  });
+
+  it('accepts a listed host', async () => {
+    const client = await registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com/connector_platform_oauth_redirect']);
+    expect(client.client_id).toBeTruthy();
+  });
+
+  it('refuses a look-alike host, which is how a client name can be made to look real', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com.evil.tld/cb'])).rejects.toThrow(/chatgpt\.com\.evil\.tld/);
+  });
+
+  it('refuses when any one of several redirect URIs is not listed', async () => {
+    const uris = ['https://chatgpt.com/cb', 'https://evil.tld/cb'];
+    await expect(registerWith(providerWith(['chatgpt.com']), uris)).rejects.toThrow(/evil\.tld/);
+  });
+
+  it('refuses a custom scheme even when its host looks right, since any app can claim one', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['com.evil.app://chatgpt.com/cb'])).rejects.toThrow(/https/i);
+  });
+
+  it('refuses plain http, which would carry the authorization code in the clear', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['http://chatgpt.com/cb'])).rejects.toThrow(/https/i);
+  });
+
+  it('allows http on localhost, which is how a client is tried out locally', async () => {
+    await expect(registerWith(providerWith(['localhost']), ['http://localhost:7000/cb'])).resolves.toBeTruthy();
+  });
+
+  it('ignores the port when matching a host', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com:8443/cb'])).resolves.toBeTruthy();
+  });
+
+  it('matches subdomains of a listed host but not the host as a suffix', async () => {
+    await expect(registerWith(providerWith(['claude.ai']), ['https://app.claude.ai/cb'])).resolves.toBeTruthy();
+    await expect(registerWith(providerWith(['claude.ai']), ['https://notclaude.ai/cb'])).rejects.toThrow(/notclaude\.ai/);
   });
 });

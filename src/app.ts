@@ -32,6 +32,9 @@ export interface AppDeps {
 
 const VIEWS_DIR = fileURLToPath(new URL('../views', import.meta.url));
 
+export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const ANONYMOUS_SESSION_TTL_MS = 60 * 60 * 1000;
+
 const requestId: RequestHandler = (_req, res, next) => {
   res.locals.requestId = randomUUID();
   res.setHeader('X-Request-Id', res.locals.requestId);
@@ -103,7 +106,9 @@ export function createApp(deps: AppDeps): express.Express {
       name: 'imc.sid',
       resave: false,
       saveUninitialized: false,
-      cookie: { httpOnly: true, secure: deps.config.isProduction, sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 },
+      // Short by default: the login page mints a CSRF token, so anyone who loads it gets a stored session.
+      // Signing in extends it to SESSION_TTL_MS.
+      cookie: { httpOnly: true, secure: deps.config.isProduction, sameSite: 'lax', maxAge: ANONYMOUS_SESSION_TTL_MS },
     }),
   );
   app.use(express.urlencoded({ extended: false, limit: '100kb' }));

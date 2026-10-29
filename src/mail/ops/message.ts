@@ -23,6 +23,10 @@ export interface MessageDetail {
   flags: string[];
   body: string;
   bodyTruncated: boolean;
+  /** Which part this body came from. A mail program usually shows the HTML one instead. */
+  bodyPart: 'text/plain' | 'text/html' | 'none';
+  /** True when an HTML alternative exists that a person would see in place of this body. */
+  hasHtmlAlternative: boolean;
   attachments: AttachmentInfo[];
 }
 
@@ -87,8 +91,14 @@ export async function readMessage(client: ImapFlow, folder: string, uid: number)
   if (!msg || !msg.bodyStructure) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
   const scan = scanStructure(msg.bodyStructure);
   let body = '';
-  if (scan.text) body = (await downloadPart(client, uid, scan.text.part ?? '1', 1_000_000)).data.toString('utf8');
-  else if (scan.html) body = htmlToText((await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).data.toString('utf8'));
+  let bodyPart: MessageDetail['bodyPart'] = 'none';
+  if (scan.text) {
+    body = (await downloadPart(client, uid, scan.text.part ?? '1', 1_000_000)).data.toString('utf8');
+    bodyPart = 'text/plain';
+  } else if (scan.html) {
+    body = htmlToText((await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).data.toString('utf8'));
+    bodyPart = 'text/html';
+  }
   const truncated = truncateUtf8(body);
   return {
     folder,
@@ -102,6 +112,8 @@ export async function readMessage(client: ImapFlow, folder: string, uid: number)
     flags: [...(msg.flags ?? [])],
     body: truncated.text,
     bodyTruncated: truncated.truncated,
+    bodyPart,
+    hasHtmlAlternative: Boolean(scan.html),
     attachments: scan.attachments,
   };
 }

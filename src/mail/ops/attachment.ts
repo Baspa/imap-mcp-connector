@@ -1,7 +1,7 @@
 import type { ImapFlow } from 'imapflow';
-import { extractText, getDocumentProxy } from 'unpdf';
+import { getDocumentProxy } from 'unpdf';
 import { MailError } from '../errors.js';
-import { htmlToText, truncateUtf8 } from '../format.js';
+import { MAX_BODY_BYTES, htmlToText, truncateUtf8 } from '../format.js';
 import { resolveFolder } from './folders.js';
 import { downloadPart, scanStructure } from './message.js';
 
@@ -26,11 +26,47 @@ function textKind(contentType: string, filename: string): TextKind | null {
   return null;
 }
 
-async function pdfText(buf: Buffer): Promise<string> {
+/**
+ * A PDF of a few hundred KB can hold hundreds of MB of text once decompressed, which would take the whole
+ * process down with it. Pages are read one at a time and the walk stops as soon as there is enough text.
+ */
+export const MAX_PDF_PAGES = 50;
+
+async function pdfText(buf: Buffer): Promise<{ text: string; stoppedEarly: boolean }> {
   const pdf = await getDocumentProxy(new Uint8Array(buf));
   try {
-    const { text } = await extractText(pdf, { mergePages: true });
-    return text;
+    const pageCount = Math.min(pdf.numPages, MAX_PDF_PAGES);
+    const pages: string[] = [];
+    let bytes = 0;
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
+      // Streamed, not fetched whole: a single page can hold hundreds of MB of text once decompressed, so
+      // materialising the page before measuring it would already be too late. hasEOL keeps the line breaks
+      // that make an invoice or a statement readable.
+      const reader = (await pdf.getPage(pageNumber)).streamTextContent().getReader();
+      const parts: string[] = [];
+      let full = false;
+      try {
+        while (!full) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const item of value?.items ?? []) {
+            if (!('str' in item)) continue;
+            const piece = item.str + (item.hasEOL ? '\n' : '');
+            parts.push(piece);
+            bytes += Buffer.byteLength(piece, 'utf8');
+            if (bytes >= MAX_BODY_BYTES) {
+              full = true;
+              break;
+            }
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      pages.push(parts.join(''));
+      if (full) return { text: pages.join('\n'), stoppedEarly: true };
+    }
+    return { text: pages.join('\n'), stoppedEarly: pdf.numPages > pageCount };
   } finally {
     await pdf.loadingTask.destroy();
   }
@@ -67,9 +103,10 @@ export async function getAttachment(
 
     const { data, charset } = await downloadPart(client, uid, partId, MAX_ATTACHMENT_BYTES);
     let raw: string;
+    let stoppedEarly = false;
     if (kind === 'pdf') {
       try {
-        raw = await pdfText(data);
+        ({ text: raw, stoppedEarly } = await pdfText(data));
       } catch {
         return { ...base, text: null, truncated: false, note: 'PDF could not be read (corrupt or password-protected).' };
       }
@@ -80,7 +117,7 @@ export async function getAttachment(
       raw = kind === 'html' ? htmlToText(decoded) : decoded;
     }
     const { text, truncated } = truncateUtf8(raw);
-    return { ...base, text, truncated };
+    return { ...base, text, truncated: truncated || stoppedEarly };
   } finally {
     lock.release();
   }

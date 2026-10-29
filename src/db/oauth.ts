@@ -69,9 +69,11 @@ export interface AuthCode {
   resource: string | null;
   expiresAt: number;
   used: boolean;
+  /** Set when the code is redeemed, so a replay can revoke what the first redemption issued. */
+  grantId: string | null;
 }
 
-export function insertCode(db: Db, c: Omit<AuthCode, 'used'>): void {
+export function insertCode(db: Db, c: Omit<AuthCode, 'used' | 'grantId'>): void {
   db.prepare(
     `INSERT INTO oauth_codes (code_hash, client_id, user_id, code_challenge, redirect_uri, scopes, resource, expires_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -80,7 +82,7 @@ export function insertCode(db: Db, c: Omit<AuthCode, 'used'>): void {
 
 export function getCode(db: Db, codeHash: string): AuthCode | undefined {
   const r = db.prepare('SELECT * FROM oauth_codes WHERE code_hash = ?').get(codeHash) as
-    | { code_hash: string; client_id: string; user_id: number; code_challenge: string; redirect_uri: string; scopes: string; resource: string | null; expires_at: number; used: number }
+    | { code_hash: string; client_id: string; user_id: number; code_challenge: string; redirect_uri: string; scopes: string; resource: string | null; expires_at: number; used: number; grant_id: string | null }
     | undefined;
   return (
     r && {
@@ -93,13 +95,16 @@ export function getCode(db: Db, codeHash: string): AuthCode | undefined {
       resource: r.resource,
       expiresAt: r.expires_at,
       used: r.used === 1,
+      grantId: r.grant_id,
     }
   );
 }
 
-/** Returns true only for the first caller; later calls return false. */
-export function markCodeUsed(db: Db, codeHash: string): boolean {
-  return db.prepare('UPDATE oauth_codes SET used = 1 WHERE code_hash = ? AND used = 0').run(codeHash).changes === 1;
+/** Claims the code for one grant. Returns true only for the first caller; later calls return false. */
+export function markCodeUsed(db: Db, codeHash: string, grantId: string): boolean {
+  return (
+    db.prepare('UPDATE oauth_codes SET used = 1, grant_id = ? WHERE code_hash = ? AND used = 0').run(grantId, codeHash).changes === 1
+  );
 }
 
 export interface TokenRecord {
@@ -185,6 +190,10 @@ export function listActiveGrants(db: Db, userId: number, now: number): GrantSumm
     connectedAt: r.connected_at,
     lastUsedAt: r.last_used_at,
   }));
+}
+
+export function revokeAllUserGrants(db: Db, userId: number, now: number): void {
+  db.prepare('UPDATE oauth_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now, userId);
 }
 
 export function revokeUserGrant(db: Db, userId: number, grantId: string, now: number): void {

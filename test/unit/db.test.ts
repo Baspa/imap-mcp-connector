@@ -123,8 +123,11 @@ describe('oauth', () => {
     insertClient(db, client, 1);
     insertCode(db, { codeHash: 'ch1', clientId: 'c1', userId: u.id, codeChallenge: 'x', redirectUri: 'https://claude.ai/cb', scopes: [], resource: null, expiresAt: 99 });
     expect(getCode(db, 'ch1')?.used).toBe(false);
-    expect(markCodeUsed(db, 'ch1')).toBe(true);
-    expect(markCodeUsed(db, 'ch1')).toBe(false);
+    expect(getCode(db, 'ch1')?.grantId).toBeNull();
+    expect(markCodeUsed(db, 'ch1', 'g1')).toBe(true);
+    expect(getCode(db, 'ch1')?.grantId).toBe('g1');
+    expect(markCodeUsed(db, 'ch1', 'g2')).toBe(false);
+    expect(getCode(db, 'ch1')?.grantId).toBe('g1');
   });
 
   it('revokes tokens once and whole grants', () => {
@@ -192,5 +195,33 @@ describe('counters and purge', () => {
     expect(getToken(db, 'new')).toBeDefined();
     expect(loginFailuresSince(db, 'k', 0)).toBe(0);
     expect(loginFailuresSince(db, 'recent', 0)).toBe(1);
+  });
+});
+
+describe('purging abandoned clients', () => {
+  // Registration is open to anyone, so rows that never led to a connection must not accumulate forever.
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it('removes a client that registered long ago and never got a token', () => {
+    const db = testDb();
+    insertClient(db, { ...client, client_id: 'stale' } as never, 1000);
+    purgeExpired(db, 1000 + 8 * DAY);
+    expect(getClient(db, 'stale')).toBeUndefined();
+  });
+
+  it('keeps a recently registered client, because its sign-in may still be in progress', () => {
+    const db = testDb();
+    insertClient(db, { ...client, client_id: 'fresh' } as never, 1000);
+    purgeExpired(db, 1000 + DAY);
+    expect(getClient(db, 'fresh')).toBeDefined();
+  });
+
+  it('keeps an old client that still has a token', () => {
+    const db = testDb();
+    const u = createTestUser(db);
+    insertClient(db, client as never, 1000);
+    token(db, u.id, 'live', 'refresh', 'g1', 1000 + 100 * DAY);
+    purgeExpired(db, 1000 + 8 * DAY);
+    expect(getClient(db, 'c1')).toBeDefined();
   });
 });

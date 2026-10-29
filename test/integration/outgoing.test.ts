@@ -25,7 +25,7 @@ beforeEach(async () => {
   aliceImap = await connectImap(a.email, a.password);
   await createFolders(aliceImap);
   const pool = new MailPool({ db, key: TEST_KEY, signInUrl: 'http://localhost/login' });
-  deps = { db, key: TEST_KEY, pool, smtpFactory: defaultSmtpFactory, defaultSendLimitPerHour: 20, signInUrl: 'http://localhost/login' };
+  deps = { db, key: TEST_KEY, pool, smtpFactory: defaultSmtpFactory, defaultSendLimitPerHour: 20, allowedRecipientDomains: [], signInUrl: 'http://localhost/login' };
 });
 
 afterEach(async () => {
