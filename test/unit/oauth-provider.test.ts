@@ -175,6 +175,22 @@ describe('client registration and redirect hosts', () => {
     await expect(registerWith(providerWith(['chatgpt.com']), uris)).rejects.toThrow(/evil\.tld/);
   });
 
+  it('refuses a custom scheme even when its host looks right, since any app can claim one', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['com.evil.app://chatgpt.com/cb'])).rejects.toThrow(/https/i);
+  });
+
+  it('refuses plain http, which would carry the authorization code in the clear', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['http://chatgpt.com/cb'])).rejects.toThrow(/https/i);
+  });
+
+  it('allows http on localhost, which is how a client is tried out locally', async () => {
+    await expect(registerWith(providerWith(['localhost']), ['http://localhost:7000/cb'])).resolves.toBeTruthy();
+  });
+
+  it('ignores the port when matching a host', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com:8443/cb'])).resolves.toBeTruthy();
+  });
+
   it('matches subdomains of a listed host but not the host as a suffix', async () => {
     await expect(registerWith(providerWith(['claude.ai']), ['https://app.claude.ai/cb'])).resolves.toBeTruthy();
     await expect(registerWith(providerWith(['claude.ai']), ['https://notclaude.ai/cb'])).rejects.toThrow(/notclaude\.ai/);

@@ -44,11 +44,20 @@ export class SqliteOAuthProvider implements OAuthServerProvider {
     if (this.allowedRedirectHosts.length === 0) return;
     const uris = Array.isArray(redirectUris) ? redirectUris : [];
     for (const uri of uris) {
-      let host: string;
+      let parsed: URL;
       try {
-        host = new URL(String(uri)).host.toLowerCase();
+        parsed = new URL(String(uri));
       } catch {
         throw new InvalidClientError(`Redirect URI "${String(uri)}" is not a valid URL.`);
+      }
+      // Hostname, not host: the port does not change who receives the code, but the scheme does. Any app can
+      // claim a custom scheme such as com.example://, so a familiar-looking host under one proves nothing.
+      const host = parsed.hostname.toLowerCase();
+      const isLoopback = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+      if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLoopback)) {
+        throw new InvalidClientError(
+          `Redirect URI "${String(uri)}" must use https (http is accepted only for localhost).`,
+        );
       }
       if (!this.allowedRedirectHosts.some((allowed) => hostMatches(host, allowed))) {
         throw new InvalidClientError(
