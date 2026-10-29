@@ -3,7 +3,7 @@ export function tinyPdf(text: string): Buffer {
   return tinyPdfPages([text]);
 }
 
-/** Builds a minimal valid PDF with one page per entry (ASCII only). */
+/** Builds a minimal valid PDF with one page per entry (ASCII only). A newline in an entry starts a new line. */
 export function tinyPdfPages(pages: string[]): Buffer {
   const pageCount = pages.length;
   // Object layout: 1 catalog, 2 page tree, 3 font, then a page and a content stream per entry.
@@ -17,7 +17,8 @@ export function tinyPdfPages(pages: string[]): Buffer {
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
   ];
   pages.forEach((text, i) => {
-    const stream = `BT /F1 18 Tf 20 100 Td (${text}) Tj ET`;
+    const lines = text.split('\n');
+    const stream = `BT /F1 18 Tf 20 100 Td 20 TL ${lines.map((l) => `(${l}) Tj T*`).join(' ')} ET`;
     objects.push(
       `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents ${contentId(i)} 0 R /Resources << /Font << /F1 ${fontId} 0 R >> >> >>`,
       `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,

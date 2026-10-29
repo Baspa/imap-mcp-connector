@@ -39,11 +39,32 @@ async function pdfText(buf: Buffer): Promise<{ text: string; stoppedEarly: boole
     const pages: string[] = [];
     let bytes = 0;
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber++) {
-      const content = await (await pdf.getPage(pageNumber)).getTextContent();
-      const text = content.items.map((item) => ('str' in item ? item.str : '')).join(' ');
-      pages.push(text);
-      bytes += Buffer.byteLength(text, 'utf8');
-      if (bytes >= MAX_BODY_BYTES) return { text: pages.join('\n'), stoppedEarly: true };
+      // Streamed, not fetched whole: a single page can hold hundreds of MB of text once decompressed, so
+      // materialising the page before measuring it would already be too late. hasEOL keeps the line breaks
+      // that make an invoice or a statement readable.
+      const reader = (await pdf.getPage(pageNumber)).streamTextContent().getReader();
+      const parts: string[] = [];
+      let full = false;
+      try {
+        while (!full) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const item of value?.items ?? []) {
+            if (!('str' in item)) continue;
+            const piece = item.str + (item.hasEOL ? '\n' : '');
+            parts.push(piece);
+            bytes += Buffer.byteLength(piece, 'utf8');
+            if (bytes >= MAX_BODY_BYTES) {
+              full = true;
+              break;
+            }
+          }
+        }
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+      pages.push(parts.join(''));
+      if (full) return { text: pages.join('\n'), stoppedEarly: true };
     }
     return { text: pages.join('\n'), stoppedEarly: pdf.numPages > pageCount };
   } finally {

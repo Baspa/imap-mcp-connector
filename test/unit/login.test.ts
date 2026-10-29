@@ -370,3 +370,22 @@ describe('login and connected AI apps', () => {
     expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
   });
 });
+
+describe('login when the stored password cannot be read', () => {
+  it('keeps connected apps instead of revoking them on every sign-in', async () => {
+    // After an ENCRYPTION_KEY rotation every stored password is unreadable; that is not a password change.
+    const d = deps({ verifyImap: vi.fn(async () => 'ok' as VerifyResult) });
+    const db = d.db;
+    await login(d, input);
+    const user = findUserByEmail(db, 'alice@x.org')!;
+    insertClient(db, { client_id: 'c9', client_name: 'AI', redirect_uris: ['http://localhost/cb'] } as never, 1_000_000);
+    insertToken(db, {
+      tokenHash: 'h9', kind: 'refresh', grantId: 'g9', clientId: 'c9',
+      userId: user.id, scopes: [], createdAt: 1_000_000, expiresAt: 2_000_000,
+    });
+    db.prepare('UPDATE users SET imap_password_enc = ? WHERE id = ?').run('not-decryptable', user.id);
+
+    await login(d, input);
+    expect(listActiveGrants(db, user.id, 1_000_000)).toHaveLength(1);
+  });
+});

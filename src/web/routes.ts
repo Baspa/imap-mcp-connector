@@ -20,7 +20,7 @@ const SECURITIES: Security[] = ['tls', 'starttls', 'none'];
 // Hand-entered settings make the server connect where the visitor says, so only real mail ports are
 // accepted; any port would turn sign-in into a port scanner against third parties.
 const IMAP_PORTS = [993, 143];
-const SMTP_PORTS = [465, 587, 25];
+const SMTP_PORTS = [465, 587, 25, 2525];
 const isPort = (n: number, allowed: number[]) => allowed.includes(n);
 const isSecurity = (s: string | undefined): s is Security => SECURITIES.includes(s as Security);
 

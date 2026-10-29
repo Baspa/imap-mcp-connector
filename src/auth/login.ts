@@ -56,7 +56,8 @@ export function rateLimitScope(ip: string): string {
   try {
     parsed = ipaddr.parse(ip);
   } catch {
-    return ip;
+    // One shared bucket: an unparsable value is spoofed or unknown, and must not mint a fresh allowance.
+    return 'unparsed';
   }
   if (parsed.kind() !== 'ipv6') return parsed.toNormalizedString();
   const v6 = parsed as ipaddr.IPv6;
@@ -169,7 +170,9 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
     // A changed mail password is how someone locks a mailbox down, so connected AI apps must lose access too.
-    if (storedPassword(deps, existing) !== input.password) {
+    // An unreadable stored password is a key rotation, not a change, and must not revoke everyone's apps.
+    const stored = storedPassword(deps, existing);
+    if (stored !== null && stored !== input.password) {
       revokeAllUserGrants(deps.db, existing.id, now);
       audit('grants_revoked', { userId: existing.id, email, reason: 'password_changed' });
     }

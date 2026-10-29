@@ -42,3 +42,11 @@ describe('getAttachment with a PDF', () => {
     expect(result.truncated).toBe(true);
   });
 });
+
+describe('PDF text layout', () => {
+  it('keeps line breaks, so a statement does not arrive as one run-on line', async () => {
+    const client = clientWithPdf(tinyPdfPages(['Invoice 2026-1041\nAmount due: EUR 1.234,56']));
+    const result = await getAttachment(client, 'INBOX', 1, '2');
+    expect(result.text).toContain('Invoice 2026-1041\nAmount due: EUR 1.234,56');
+  });
+});

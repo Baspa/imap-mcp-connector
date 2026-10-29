@@ -116,16 +116,18 @@ async function loadCandidates(client: ImapFlow, locations: Location[]): Promise<
 const DATE_TRUST_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The Date header orders a thread the way a mail client does, but a sender chooses it freely and can
- * backdate a message to the top of someone else's conversation. Where the claimed date is well before the
- * message actually arrived, arrival wins. The window keeps ordinary clock skew and slow relays untouched.
+ * The Date header orders a thread the way a mail client does, but a sender chooses it freely. Backdating
+ * puts a message at the top of someone else's conversation; forward-dating puts it last, where a model reads
+ * the latest word, and keeps it through the newest-`max` cut. Either way, arrival wins when the claim
+ * contradicts it. The window leaves ordinary clock skew and slow relays untouched.
  */
 function orderingDate(c: Candidate): string | null {
   if (!c.receivedAt || !c.date) return c.date ?? c.receivedAt;
   const claimed = Date.parse(c.date);
   const arrived = Date.parse(c.receivedAt);
   if (Number.isNaN(claimed) || Number.isNaN(arrived)) return c.date;
-  return claimed < arrived - DATE_TRUST_WINDOW_MS ? c.receivedAt : c.date;
+  const contradicts = claimed < arrived - DATE_TRUST_WINDOW_MS || claimed > arrived + DATE_TRUST_WINDOW_MS;
+  return contradicts ? c.receivedAt : c.date;
 }
 
 function compareArrival(a: Candidate, b: Candidate): number {

@@ -59,7 +59,26 @@ async function prepare(deps: OutgoingDeps, user: User, req: ComposeRequest, now:
   };
 }
 
+/**
+ * An email that reaches the model can talk it into sending. Where a deployment lists recipient domains,
+ * that turns a successful injection into a refused tool call instead of mail leaving the organisation.
+ */
+function assertRecipientsAllowed(allowed: string[], recipients: string[]): void {
+  if (allowed.length === 0) return;
+  const refused = recipients.filter((address) => {
+    const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase();
+    return !allowed.includes(domain);
+  });
+  if (refused.length > 0) {
+    throw new MailError(
+      'PERMISSION_DENIED',
+      `This connector may only send to ${allowed.join(', ')}. Refused: ${refused.join(', ')}.`,
+    );
+  }
+}
+
 export async function createDraft(deps: OutgoingDeps, user: User, req: ComposeRequest) {
+  assertRecipientsAllowed(deps.allowedRecipientDomains, [...req.to, ...(req.cc ?? []), ...(req.bcc ?? [])]);
   const input = await prepare(deps, user, req, deps.now?.() ?? Date.now());
   const raw = await buildMime(input, { keepBcc: true });
   const saved = await deps.pool.withImap(user, (c) => appendToRole(c, 'drafts', raw, ['\\Draft', '\\Seen']));
@@ -92,24 +111,6 @@ async function deliver(deps: OutgoingDeps, user: User, req: ComposeRequest, now:
     transport.close();
   }
   return input;
-}
-
-/**
- * An email that reaches the model can talk it into sending. Where a deployment lists recipient domains,
- * that turns a successful injection into a refused tool call instead of mail leaving the organisation.
- */
-function assertRecipientsAllowed(allowed: string[], recipients: string[]): void {
-  if (allowed.length === 0) return;
-  const refused = recipients.filter((address) => {
-    const domain = address.slice(address.lastIndexOf('@') + 1).toLowerCase();
-    return !allowed.includes(domain);
-  });
-  if (refused.length > 0) {
-    throw new MailError(
-      'PERMISSION_DENIED',
-      `This connector may only send to ${allowed.join(', ')}. Refused: ${refused.join(', ')}.`,
-    );
-  }
 }
 
 export async function sendEmail(deps: OutgoingDeps, user: User, req: ComposeRequest) {

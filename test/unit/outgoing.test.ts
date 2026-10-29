@@ -4,7 +4,7 @@ import { encryptSecret } from '../../src/crypto.js';
 import { sendsSince } from '../../src/db/counters.js';
 import { findUserById, updateSmtpSettings, type User } from '../../src/db/users.js';
 import { GuardError, type PinnedAddresses } from '../../src/guard.js';
-import { sendEmail, type OutgoingDeps } from '../../src/mail/outgoing.js';
+import { createDraft, sendEmail, type OutgoingDeps } from '../../src/mail/outgoing.js';
 import { MailPool } from '../../src/mail/pool.js';
 import type { SmtpFactory, SmtpTarget } from '../../src/mail/smtp.js';
 import { TEST_KEY } from '../helpers/config.js';
@@ -159,5 +159,14 @@ describe('sendEmail with a recipient allowlist', () => {
     const { user, deps, sent } = setup();
     await sendEmail(deps, user, { to: ['anyone@elsewhere.example'], subject: 'Hi', body: 'Hello' });
     expect(sent[0].envelope.to).toEqual(['anyone@elsewhere.example']);
+  });
+});
+
+describe('createDraft and the recipient allowlist', () => {
+  it('refuses a draft addressed outside the listed domains', async () => {
+    // A draft is staged mail: an injection could otherwise prepare it for the user to send by hand.
+    const { user, deps } = setup({ allowedRecipientDomains: ['y.org'] });
+    await expect(createDraft(deps, user, { to: ['attacker@evil.example'], subject: 'Hi', body: 'Hello' }))
+      .rejects.toThrow(/evil\.example/);
   });
 });
