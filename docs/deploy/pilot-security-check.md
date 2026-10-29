@@ -2,7 +2,7 @@
 
 A hands-on check of one running deployment before real mail is connected to an AI client. It probes the boundary that matters most here: an email is written by someone else, and the AI reads it. Everything below is done against your own server and your own mailbox.
 
-Written for the `mcp.we-are.club` pilot with test mailbox `mcp@we-are.club`. Change the addresses for another deployment.
+Written for the pilot deployment with test mailbox `probe@example.com`. Change the addresses for another deployment.
 
 **What this does not cover:** the mail provider's own security, the AI vendor's handling of your data, and whether the model obeys its instructions every time. The last one cannot be proven by testing; a pass means the connector marked the content correctly, not that a model will never be fooled.
 
@@ -19,10 +19,13 @@ Written for the `mcp.we-are.club` pilot with test mailbox `mcp@we-are.club`. Cha
 From a clone of this repository, with the test mailbox's app password:
 
 ```bash
-PROBE_SMTP_PASS='<app password>' node scripts/pilot-probe.mjs
+PROBE_MAILBOX=probe@example.com \
+PROBE_SMTP_HOST=mail.example.com \
+PROBE_SMTP_PASS='<app password>' \
+  node scripts/pilot-probe.mjs
 ```
 
-Twelve mails arrive, each subject starting with `[PILOT-PROBE]`. `--list` shows what each one probes without sending; `--only tag-spoof,pdf` sends a subset. Override `PROBE_MAILBOX`, `PROBE_SMTP_HOST`, `PROBE_SMTP_PORT`, `PROBE_SMTP_USER` and `PROBE_CANARY` for another deployment.
+Twelve mails arrive, each subject starting with `[PILOT-PROBE]`. `--list` shows what each one probes without sending, and needs no credentials; `--only tag-spoof,pdf` sends a subset. `PROBE_SMTP_PORT` (465), `PROBE_SMTP_USER` (defaults to the mailbox) and `PROBE_CANARY` are optional.
 
 Sending from a second, external mailbox is a stronger test than sending to itself: the mail then crosses SPF and DMARC like real attacker mail would. Set `PROBE_SMTP_USER` and its password to that mailbox.
 
