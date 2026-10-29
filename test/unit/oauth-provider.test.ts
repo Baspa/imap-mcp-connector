@@ -128,3 +128,41 @@ describe('SqliteOAuthProvider', () => {
     expect(provider.describePending(id)).toBeNull();
   });
 });
+
+describe('client registration and redirect hosts', () => {
+  function providerWith(hosts: string[]): SqliteOAuthProvider {
+    return new SqliteOAuthProvider(testDb(), () => 1_000_000, hosts);
+  }
+
+  async function registerWith(provider: SqliteOAuthProvider, redirectUris: string[]) {
+    return provider.clientsStore.registerClient!({
+      redirect_uris: redirectUris,
+      client_name: 'ChatGPT',
+      token_endpoint_auth_method: 'none',
+    } as OAuthClientInformationFull);
+  }
+
+  it('accepts any redirect host when no hosts are listed', async () => {
+    const client = await registerWith(providerWith([]), ['https://anything.example/cb']);
+    expect(client.redirect_uris).toEqual(['https://anything.example/cb']);
+  });
+
+  it('accepts a listed host', async () => {
+    const client = await registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com/connector_platform_oauth_redirect']);
+    expect(client.client_id).toBeTruthy();
+  });
+
+  it('refuses a look-alike host, which is how a client name can be made to look real', async () => {
+    await expect(registerWith(providerWith(['chatgpt.com']), ['https://chatgpt.com.evil.tld/cb'])).rejects.toThrow(/chatgpt\.com\.evil\.tld/);
+  });
+
+  it('refuses when any one of several redirect URIs is not listed', async () => {
+    const uris = ['https://chatgpt.com/cb', 'https://evil.tld/cb'];
+    await expect(registerWith(providerWith(['chatgpt.com']), uris)).rejects.toThrow(/evil\.tld/);
+  });
+
+  it('matches subdomains of a listed host but not the host as a suffix', async () => {
+    await expect(registerWith(providerWith(['claude.ai']), ['https://app.claude.ai/cb'])).resolves.toBeTruthy();
+    await expect(registerWith(providerWith(['claude.ai']), ['https://notclaude.ai/cb'])).rejects.toThrow(/notclaude\.ai/);
+  });
+});

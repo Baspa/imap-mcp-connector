@@ -36,7 +36,7 @@ const app = createApp({
   config,
   db,
   pool,
-  provider: new SqliteOAuthProvider(db),
+  provider: new SqliteOAuthProvider(db, Date.now, config.allowedRedirectHosts),
   smtpFactory: defaultSmtpFactory,
   discover: (email) => discoverSettings(email),
   verifyImap: (target, password) => verifyImapLogin(target, password),

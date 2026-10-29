@@ -5,6 +5,7 @@ export interface Config {
   allowedEmailDomains: string[];
   allowedImapHosts: string[];
   allowedRecipientDomains: string[];
+  allowedRedirectHosts: string[];
   allowPrivateHosts: boolean;
   defaultSendLimitPerHour: number;
   dataDir: string;
@@ -71,6 +72,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     allowedEmailDomains,
     allowedImapHosts,
     allowedRecipientDomains: list(env.ALLOWED_RECIPIENT_DOMAINS),
+    allowedRedirectHosts: list(env.ALLOWED_REDIRECT_HOSTS),
     allowPrivateHosts: env.ALLOW_PRIVATE_HOSTS === 'true',
     defaultSendLimitPerHour: positiveInt('DEFAULT_SEND_LIMIT_PER_HOUR', env.DEFAULT_SEND_LIMIT_PER_HOUR, 20),
     dataDir: env.DATA_DIR || '/data',

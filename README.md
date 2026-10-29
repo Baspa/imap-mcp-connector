@@ -57,6 +57,7 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `ALLOWED_EMAIL_DOMAINS` | at least one of these | Comma-separated email domains allowed to sign in. |
 | `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server that auto-discovery finds. Hand-entered servers must be listed by name. |
 | `ALLOWED_RECIPIENT_DOMAINS` | no (empty) | Comma-separated domains the AI may send to. Empty allows any. A send to any other domain is refused, including via cc and bcc. |
+| `ALLOWED_REDIRECT_HOSTS` | no (empty) | Comma-separated hosts (and their subdomains) that may receive an authorization code, e.g. `chatgpt.com,claude.ai`. Empty allows any. Registration is open by design, so this is what stops a client that names itself after a real app from redirecting to its own host. |
 | `ALLOW_PRIVATE_HOSTS` | no (`false`) | Allow mail servers on private networks and unencrypted connections. |
 | `DEFAULT_SEND_LIMIT_PER_HOUR` | no (`20`) | Emails each user's AI may send per hour. |
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |

@@ -2,7 +2,11 @@
 <h1>Allow <%= clientName %> to use your mailbox?</h1>
 <div class="card">
   <p><strong><%= clientName %></strong> wants to access <strong><%= user.email %></strong>.</p>
-  <p>After approval you'll be sent to <strong><%= redirectHost %></strong>.</p>
+  <p class="banner">
+    After approval you will be sent to <strong><code><%= redirectHost %></code></strong>.
+    Any app can call itself <strong><%= clientName %></strong>, so this address is the only reliable sign of who is really asking.
+    Approve only if it belongs to the app you are connecting, such as <code>chatgpt.com</code> or <code>claude.ai</code>.
+  </p>
   <p>Current permission level: <strong><%= level %></strong>. You can change it any time in <a href="/settings">settings</a>, and revoke this app there too.</p>
   <form method="post" action="/consent">
     <input type="hidden" name="_csrf" value="<%= csrf %>">
