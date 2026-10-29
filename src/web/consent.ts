@@ -1,6 +1,7 @@
 import { Router, type Response } from 'express';
 import type { AppDeps } from '../app.js';
 import type { User } from '../db/users.js';
+import { audit } from '../log.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
 import { levelLabel } from './levels.js';
 import { requireUser } from './middleware.js';
@@ -38,8 +39,15 @@ export function consentRouter(deps: AppDeps): Router {
     const reqId = typeof body.req === 'string' ? body.req : '';
     const user = res.locals.user as User;
     if (body.decision === 'approve') {
+      const described = deps.provider.describePending(reqId);
       const url = deps.provider.approve(reqId, user.id);
       if (!url) return expired(res);
+      audit('app_connected', {
+        userId: user.id,
+        clientName: described?.clientName ?? null,
+        redirectHost: described ? new URL(described.pending.redirectUri).host : null,
+        level: user.permissionLevel,
+      });
       return res.redirect(url);
     }
     const url = deps.provider.deny(reqId);

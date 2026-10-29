@@ -6,7 +6,7 @@ import { signInUrl, type Config } from '../config.js';
 import type { Db } from '../db/index.js';
 import { findUserById, type User } from '../db/users.js';
 import type { PinnedAddresses } from '../guard.js';
-import { log } from '../log.js';
+import { audit, log } from '../log.js';
 import { MailError, toMailError } from '../mail/errors.js';
 import { wrapUntrusted } from '../mail/format.js';
 import { deleteMessages, moveMessages, setFlags } from '../mail/ops/actions.js';
@@ -78,6 +78,15 @@ const composeShape = {
 
 function errorResult(code: string, message: string): CallToolResult {
   return { isError: true, content: [{ type: 'text', text: `${code}: ${message}` }] };
+}
+
+function allRecipients(a: Args<typeof composeShape>): string[] {
+  return [...a.to, ...(a.cc ?? []), ...(a.bcc ?? [])];
+}
+
+/** Domains only: enough to spot mail leaving the organisation, without putting addresses in the log. */
+function recipientDomains(a: Args<typeof composeShape>): string[] {
+  return [...new Set(allRecipients(a).map((address) => address.slice(address.lastIndexOf('@') + 1).toLowerCase()))];
 }
 
 function toCompose(a: Args<typeof composeShape>): ComposeRequest {
@@ -192,7 +201,9 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
       guarded<Args<typeof moveShape>>('move_messages', 'draft', false, (user, a) =>
         imap(user, async (c) => {
           await assertMayMoveTo(c, user, a.destination);
-          return moveMessages(c, a.folder, a.uids, a.destination);
+          const result = await moveMessages(c, a.folder, a.uids, a.destination);
+          audit('move_messages', { userId: user.id, folder: result.from, destination: result.to, count: result.moved });
+          return result;
         }),
       ),
     );
@@ -212,12 +223,22 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
         inputSchema: composeShape,
         annotations: DESTRUCTIVE,
       },
-      guarded<Args<typeof composeShape>>('send_email', 'full', false, (user, a) => sendEmail(outgoing, user, toCompose(a))),
+      guarded<Args<typeof composeShape>>('send_email', 'full', false, async (user, a) => {
+        const result = await sendEmail(outgoing, user, toCompose(a));
+        audit('send_email', { userId: user.id, recipients: allRecipients(a).length, domains: recipientDomains(a) });
+        return result;
+      }),
     );
     server.registerTool(
       'delete_messages',
       { title: 'Delete messages', description: 'Move messages to Trash. Never deletes permanently.', inputSchema: deleteShape, annotations: DESTRUCTIVE },
-      guarded<Args<typeof deleteShape>>('delete_messages', 'full', false, (user, a) => imap(user, (c) => deleteMessages(c, a.folder, a.uids))),
+      guarded<Args<typeof deleteShape>>('delete_messages', 'full', false, (user, a) =>
+        imap(user, async (c) => {
+          const result = await deleteMessages(c, a.folder, a.uids);
+          audit('delete_messages', { userId: user.id, folder: result.from, count: result.moved });
+          return result;
+        }),
+      ),
     );
   }
 }

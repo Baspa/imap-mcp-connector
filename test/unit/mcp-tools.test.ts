@@ -1,5 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { setPermissionLevel } from '../../src/db/users.js';
 import { MailPool } from '../../src/mail/pool.js';
 import { defaultSmtpFactory } from '../../src/mail/smtp.js';
@@ -97,5 +97,34 @@ describe('move_messages destinations', () => {
   it('allows Junk at full level', async () => {
     const result = await moveHandler('full')({ folder: 'INBOX', uids: [1], destination: 'Junk' });
     expect(result.isError).toBeFalsy();
+  });
+});
+
+describe('audited tool calls', () => {
+  it('records a move with its destination and count, but no message content', async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: string) => void lines.push(line));
+    const db = testDb();
+    const user = createTestUser(db, { permissionLevel: 'draft' });
+    const handlers = new Map<string, Handler>();
+    const fake = { registerTool: (n: string, _c: unknown, cb: Handler) => handlers.set(n, cb) } as unknown as McpServer;
+    const client = {
+      list: async () => [
+        { path: 'INBOX', flags: new Set(['\\Inbox']), specialUse: '\\Inbox', specialUseSource: 'extension', delimiter: '/' },
+        { path: 'Archive', flags: new Set(['\\Archive']), specialUse: '\\Archive', specialUseSource: 'extension', delimiter: '/' },
+      ],
+      capabilities: new Set(['MOVE']),
+      getMailboxLock: async () => ({ release: () => {} }),
+      search: async () => [1, 2],
+      messageMove: async () => ({ uidMap: new Map([[1, 10], [2, 11]]) }),
+    };
+    const pool = { withImap: async (_u: unknown, fn: (c: unknown) => Promise<unknown>) => fn(client) } as unknown as MailPool;
+    registerTools(fake, { db, config: testConfig(), pool, smtpFactory: defaultSmtpFactory, userId: user.id }, 'draft');
+
+    await handlers.get('move_messages')!({ folder: 'INBOX', uids: [1, 2], destination: 'Archive' });
+    spy.mockRestore();
+
+    const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((e) => e.msg === 'audit');
+    expect(events).toContainEqual(expect.objectContaining({ event: 'move_messages', userId: user.id, destination: 'Archive', count: 2 }));
   });
 });

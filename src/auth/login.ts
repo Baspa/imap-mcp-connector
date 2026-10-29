@@ -8,6 +8,7 @@ import {
 } from '../db/users.js';
 import { revokeAllUserGrants } from '../db/oauth.js';
 import { DiscoveryUnavailableError } from '../discovery/index.js';
+import { audit } from '../log.js';
 import { GuardError, isAllowedSmtpHost, isListedImapHost, isTrustedServer, type PinnedAddresses } from '../guard.js';
 import type { ImapTarget, VerifyResult } from '../mail/imap.js';
 import type { MailServerSettings, SettingsSource } from '../types.js';
@@ -168,8 +169,12 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   const passwordEnc = encryptSecret(deps.config.encryptionKey, input.password);
   if (existing) {
     // A changed mail password is how someone locks a mailbox down, so connected AI apps must lose access too.
-    if (storedPassword(deps, existing) !== input.password) revokeAllUserGrants(deps.db, existing.id, now);
+    if (storedPassword(deps, existing) !== input.password) {
+      revokeAllUserGrants(deps.db, existing.id, now);
+      audit('grants_revoked', { userId: existing.id, email, reason: 'password_changed' });
+    }
     recordLogin(deps.db, existing.id, passwordEnc, now);
+    audit('sign_in', { userId: existing.id, email, isNew: false });
     if (source !== existing.settingsSource) setSettingsSource(deps.db, existing.id, source);
     return { status: 'ok', user: findUserById(deps.db, existing.id)!, isNew: false };
   }
@@ -178,6 +183,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     { ...settings, email, smtpUsername: email, imapPasswordEnc: passwordEnc, settingsSource: source === 'manual' ? 'manual' : 'discovered' },
     now,
   );
+  audit('sign_in', { userId: user.id, email, isNew: true });
   return { status: 'ok', user, isNew: true };
 }
 
