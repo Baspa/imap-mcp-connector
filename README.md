@@ -56,6 +56,7 @@ Lost it? Create a new one and sign in again. The stored password is replaced.
 | `SESSION_SECRET` | yes | ≥ 32 characters, signs session cookies. |
 | `ALLOWED_EMAIL_DOMAINS` | at least one of these | Comma-separated email domains allowed to sign in. |
 | `ALLOWED_IMAP_HOSTS` | at least one of these | Comma-separated IMAP hosts allowed; `*` allows any public server that auto-discovery finds. Hand-entered servers must be listed by name. |
+| `ALLOWED_RECIPIENT_DOMAINS` | no (empty) | Comma-separated domains the AI may send to. Empty allows any. A send to any other domain is refused, including via cc and bcc. |
 | `ALLOW_PRIVATE_HOSTS` | no (`false`) | Allow mail servers on private networks and unencrypted connections. |
 | `DEFAULT_SEND_LIMIT_PER_HOUR` | no (`20`) | Emails each user's AI may send per hour. |
 | `DATA_DIR` | no (`/data`) | Where the SQLite database lives. |

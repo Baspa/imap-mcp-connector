@@ -131,7 +131,7 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
     if (!allowed.includes(target)) {
       throw new MailError(
         'PERMISSION_DENIED',
-        `At the "${user.permissionLevel}" permission level, messages can only be moved to Inbox or Archive, so that nothing is hidden or deleted. "${destination}" is neither. The user can change the level at ${settingsUrl}.`,
+        `At the "${user.permissionLevel}" permission level, messages can only be moved to Inbox or Archive, so that nothing is hidden or deleted. "${destination}" is neither; moving there needs the "full" level. The user can change the level at ${settingsUrl}.`,
       );
     }
   }
