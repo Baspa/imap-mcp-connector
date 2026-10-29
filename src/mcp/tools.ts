@@ -41,7 +41,7 @@ const UNTRUSTED_NOTE =
 const folder = z.string().min(1).describe('Folder path from list_folders, or a role: inbox, sent, drafts, trash, archive, junk');
 const uid = z.number().int().positive().describe('Message uid from search_messages; only valid within its folder');
 const uids = z.array(z.number().int().positive()).min(1).max(100).describe('Up to 100 message uids from the same folder');
-const addresses = z.array(z.string().email()).max(50);
+const addresses = z.array(z.email()).max(50);
 
 const searchShape = {
   folder: folder.optional().describe('Folder to search (default INBOX)'),

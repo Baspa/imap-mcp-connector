@@ -133,3 +133,23 @@ describe('plainTextDiffersFromHtml', () => {
     expect(plainTextDiffersFromHtml(plain, htmlToText(html))).toBe(false);
   });
 });
+
+describe('htmlToText and hidden content', () => {
+  // All converted text is wrapped as untrusted, so text a person would not see is acceptable; code is not.
+  it('never passes script or style content to the model', () => {
+    expect(htmlToText('<script>steal()</script>')).not.toContain('steal');
+    expect(htmlToText('<style>.a{color:red}</style>')).not.toContain('color');
+  });
+
+  it('still includes text a person would not see, which stays inside the untrusted block', () => {
+    for (const html of [
+      '<div style="display:none">PAYLOAD</div>',
+      '<div hidden>PAYLOAD</div>',
+      '<template>PAYLOAD</template>',
+      '<noscript>PAYLOAD</noscript>',
+      '<textarea>PAYLOAD</textarea>',
+    ]) {
+      expect(htmlToText(html)).toContain('PAYLOAD');
+    }
+  });
+});
