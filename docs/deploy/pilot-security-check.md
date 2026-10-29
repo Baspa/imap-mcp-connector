@@ -99,24 +99,24 @@ free -m; uptime                                   # memory and load after the pr
 - [ ] If a probe did reach a real canary address, delete it there too.
 - [ ] Revoke test connections you no longer need.
 
-## Known weak points
+## What the probes are aimed at
 
-From a code review on 2026-10-29, ranked by what they mean for a small pilot. These are the places where a probe is most likely to find something, so read them before you start.
+A code review on 2026-10-29 found ten weak points. Most were fixed in the same change as this document; the table says which, so a tester knows what should now hold and what still needs care.
 
-| # | Weak point | Where | What it means | Blunt mitigation |
-|---|---|---|---|---|
-| 1 | `send_email` does not restrict recipients, and the hourly limit counts emails, not addresses. One email takes up to 50 to + 50 cc + 50 bcc. | `src/mcp/tools.ts:199`, `src/mail/outgoing.ts:99` | At Full access, a successful injection can mail anywhere, as a real person in your domain | Keep shared mailboxes at Read and draft |
-| 2 | `text/plain` is read even when a human sees the HTML part | `src/mail/ops/message.ts:90` | What you check by eye is not what the AI reads (probe 04) | Check suspicious mail as source, not as rendered HTML |
-| 3 | Any client can register with any name and any redirect host | `src/auth/oauth-provider.ts:34`, `views/consent.ejs` | A link can lead to a real approval page for someone else's client | Read the redirect host on the approval page, every time |
-| 4 | A PDF that decompresses to hundreds of MB can exhaust memory before the 5 MB cap applies | `src/mail/ops/attachment.ts:29` | One attachment can take the process down for everyone | Watch memory during probe 08; keep swap available |
-| 5 | At Read and draft, mail can be moved to Junk or Archive, and marked read in bulk | `src/mcp/tools.ts:109` | Mail can be hidden even without delete rights | Only Trash is protected; check your provider's Junk retention |
-| 6 | Sign-in rate limiting keys on the raw IP and does not mask IPv6 | `src/auth/login.ts:54` | A single IPv6 range gets many more attempts than intended | Watch for your mail provider banning the server's IP |
-| 7 | A changed mail password does not revoke existing AI connections | `src/auth/login.ts` | A former colleague's connection returns once anyone signs in again | Revoke connections by hand when someone leaves |
-| 8 | Folder names and all error text reach the model unwrapped | `src/mcp/tools.ts:149` | A crafted folder name is not marked as untrusted | Low impact while only colleagues can create folders |
-| 9 | No record of sign-ins, new connections, sends or moves | `src/log.ts` | After an incident you cannot reconstruct what happened | Decide whether that is acceptable before connecting a shared mailbox |
-| 10 | `zod` and `deepmerge` advisories need a major upgrade and are still open | `package.json` | Memory exhaustion while validating oversized tool arguments | Caller must already be authenticated; revisit before public use |
+| Weak point | State | What a tester should see |
+|---|---|---|
+| `send_email` sent to any address, and the hourly limit counts emails, not recipients | Mitigated by `ALLOWED_RECIPIENT_DOMAINS`, off by default | With it set, a send outside those domains is refused before a send slot is used. With it empty, nothing restricts recipients |
+| `text/plain` is read while a person sees the HTML part | Flagged | `get_message` reports `plainTextDiffersFromHtml` (probe 04) |
+| A PDF could be walked in full, however large | Bounded | Extraction stops at 50 pages or once there is enough text (probe 08) |
+| At draft level, mail could be moved to Junk | Fixed | Only Inbox and Archive are accepted below full access |
+| Sign-in limits keyed on the exact IP | Fixed | IPv6 is counted per /64 |
+| A changed mail password left AI connections working | Fixed | Signing in with a different password revokes them |
+| Folder names reached the model unwrapped | Fixed | `list_folders` output is wrapped as untrusted |
+| Nothing was recorded about sign-ins, sends or moves | Fixed | The log carries `"msg":"audit"` lines |
+| **Any client can register under any name, with any redirect host** | **Open** | The approval page shows the host. Read it every time; that is the only defence |
+| **`zod` and `deepmerge` advisories need a major upgrade** | **Open** | Caller must already be authenticated; revisit before public use |
 
-Items 1 to 3 are the ones that decide whether a shared mailbox should be connected at all. The rest are worth fixing but do not change that decision.
+The two open items are the ones to weigh before connecting a shared mailbox. The fixed ones still deserve a probe run: a fix that was never exercised against a real AI client is a claim, not a result.
 
 ## Recording the result
 
