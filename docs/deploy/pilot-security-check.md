@@ -101,22 +101,24 @@ free -m; uptime                                   # memory and load after the pr
 
 ## What the probes are aimed at
 
-A code review on 2026-10-29 found ten weak points. Most were fixed in the same change as this document; the table says which, so a tester knows what should now hold and what still needs care.
+A code review on 2026-10-29 found ten weak points. All are now addressed; the table says how, so a tester knows what should hold.
 
-| Weak point | State | What a tester should see |
-|---|---|---|
-| `send_email` sent to any address, and the hourly limit counts emails, not recipients | Mitigated by `ALLOWED_RECIPIENT_DOMAINS`, off by default | With it set, a send outside those domains is refused before a send slot is used. With it empty, nothing restricts recipients |
-| `text/plain` is read while a person sees the HTML part | Flagged | `get_message` reports `plainTextDiffersFromHtml` (probe 04) |
-| A PDF could be walked in full, however large | Bounded | Extraction stops at 50 pages or once there is enough text (probe 08) |
-| At draft level, mail could be moved to Junk | Fixed | Only Inbox and Archive are accepted below full access |
-| Sign-in limits keyed on the exact IP | Fixed | IPv6 is counted per /64 |
-| A changed mail password left AI connections working | Fixed | Signing in with a different password revokes them |
-| Folder names reached the model unwrapped | Fixed | `list_folders` output is wrapped as untrusted |
-| Nothing was recorded about sign-ins, sends or moves | Fixed | The log carries `"msg":"audit"` lines |
-| **Any client can register under any name, with any redirect host** | **Open** | The approval page shows the host. Read it every time; that is the only defence |
-| **`zod` and `deepmerge` advisories need a major upgrade** | **Open** | Caller must already be authenticated; revisit before public use |
+| Weak point | How it is handled now |
+|---|---|
+| `send_email` sent to any address | `ALLOWED_RECIPIENT_DOMAINS` refuses to, cc and bcc outside the listed domains before a send slot is used. Empty means no restriction, so set it for a shared mailbox |
+| A client could register under any name with any redirect host | `ALLOWED_REDIRECT_HOSTS` refuses registration from other hosts. Empty keeps registration open, so the consent page's host stays the thing to read |
+| `text/plain` is read while a person sees the HTML part | `get_message` reports `plainTextDiffersFromHtml` (probe 04) |
+| A PDF could be walked in full, however large | Extraction stops at 50 pages or once there is enough text (probe 08) |
+| At draft level, mail could be moved to Junk | Only Inbox and Archive are accepted below full access |
+| Sign-in limits keyed on the exact IP | IPv6 is counted per /64 |
+| A changed mail password left AI connections working | Signing in with a different password revokes them |
+| Folder names reached the model unwrapped | `list_folders` output is wrapped as untrusted |
+| Nothing was recorded about sign-ins, sends or moves | The log carries `"msg":"audit"` lines |
+| `zod` and `deepmerge` advisories | Upgraded; `npm audit --omit=dev` reports nothing |
 
-The two open items are the ones to weigh before connecting a shared mailbox. The fixed ones still deserve a probe run: a fix that was never exercised against a real AI client is a claim, not a result.
+Three more came out of the same work: hand-entered server settings now accept only real mail ports, so sign-in cannot be used to probe what is listening elsewhere; a thread is ordered by arrival when a sender's Date contradicts it, so an outsider who knows a Message-ID cannot backdate itself to the top (probe 12); and one unreadable message no longer fails a whole thread (probe 11).
+
+A fix that has never been exercised against a real AI client is a claim, not a result. Run the probes anyway.
 
 ## Recording the result
 
