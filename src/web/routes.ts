@@ -7,6 +7,7 @@ import { encryptSecret } from '../crypto.js';
 import { listActiveGrants, revokeUserGrant } from '../db/oauth.js';
 import { deleteUser, serverSettingsOf, setPermissionLevel, updateSmtpSettings, type User } from '../db/users.js';
 import { GuardError, isAllowedSmtpHost } from '../guard.js';
+import { SESSION_TTL_MS } from '../app.js';
 import { log } from '../log.js';
 import type { MailServerSettings, PermissionLevel, Security } from '../types.js';
 import { csrfToken, verifyCsrf } from './csrf.js';
@@ -116,6 +117,7 @@ export function webRouter(deps: AppDeps): Router {
     }
     await new Promise<void>((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
     req.session.userId = result.user.id;
+    req.session.cookie.maxAge = SESSION_TTL_MS;
     res.redirect(next);
   });
 

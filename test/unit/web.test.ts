@@ -93,6 +93,19 @@ describe('web', () => {
     expect(findUserByEmail(deps.db, 'a@custom.org')).toBeUndefined();
   });
 
+  it('keeps an anonymous session short and extends it only after sign-in', async () => {
+    // GET /login mints a CSRF token, which creates a session row for anyone who asks for the page.
+    const { app, deps } = testApp();
+    const agent = request.agent(app);
+    await agent.get('/login');
+    const anon = deps.db.prepare('SELECT expires_at FROM sessions').get() as { expires_at: number };
+    expect(anon.expires_at - Date.now()).toBeLessThan(2 * 60 * 60 * 1000);
+
+    await signIn(agent);
+    const after = deps.db.prepare('SELECT expires_at FROM sessions ORDER BY expires_at DESC').get() as { expires_at: number };
+    expect(after.expires_at - Date.now()).toBeGreaterThan(6 * 24 * 60 * 60 * 1000);
+  });
+
   it('honors a safe next URL and ignores unsafe ones', async () => {
     const { app } = testApp();
     const agent = request.agent(app);
