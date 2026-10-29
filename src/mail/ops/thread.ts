@@ -155,7 +155,8 @@ function unreadablePlaceholder(c: Candidate, folder: string): MessageDetail {
     flags: [],
     body: 'This message could not be read, so it is left out of the conversation above.',
     bodyTruncated: false,
-    plainTextDiffersFromHtml: false,
+    bodyPart: 'none',
+    hasHtmlAlternative: false,
     attachments: [],
   };
 }
@@ -182,6 +183,9 @@ export async function getThread(client: ImapFlow, folderInput: string, uid: numb
     keptByFolder.get(c.folder)!.push(c);
   }
   const details = new Map<Candidate, MessageDetail>();
+  // One bad message is survivable; several means the connection or the mailbox is the problem, and a
+  // conversation full of placeholders would read as a real but hollowed-out thread.
+  let unreadable = 0;
   for (const [f, group] of keptByFolder) {
     await withFolder(client, f, async () => {
       for (const c of group) {
@@ -189,7 +193,8 @@ export async function getThread(client: ImapFlow, folderInput: string, uid: numb
           details.set(c, await readMessage(client, f, c.uid));
         } catch (err) {
           if (err instanceof MailError && err.code === 'NOT_FOUND') continue;
-          // One unreadable message must not cost the whole conversation, so stand in for it instead.
+          unreadable += 1;
+          if (unreadable > 1) throw err;
           log('warn', 'thread message unreadable', { folder: f, uid: c.uid, error: err instanceof Error ? err.name : 'unknown' });
           details.set(c, unreadablePlaceholder(c, f));
         }

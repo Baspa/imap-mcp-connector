@@ -82,3 +82,27 @@ describe('audited events', () => {
     expect(lines.join('\n')).not.toContain('super-secret-pw');
   });
 });
+
+describe('audited refusals', () => {
+  const settings: MailServerSettings = {
+    imapHost: 'imap.x.org', imapPort: 993, imapSecurity: 'tls',
+    smtpHost: 'smtp.x.org', smtpPort: 465, smtpSecurity: 'tls', autoSavesSent: false,
+  };
+
+  it('records a sign-in that was refused, so a blocked attempt is visible', async () => {
+    const deps: LoginDeps = {
+      db: testDb(),
+      config: testConfig(),
+      discover: vi.fn(async (): Promise<MailServerSettings | null> => settings),
+      verifyImap: vi.fn(async () => 'bad_credentials' as VerifyResult),
+      guard: vi.fn(async () => undefined),
+      now: () => 1_000_000,
+    };
+    const { lines, restore } = captureLines();
+    await login(deps, { email: 'alice@x.org', password: 'wrong', ip: '1.2.3.4' });
+    restore();
+
+    const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((e) => e.msg === 'audit');
+    expect(events).toContainEqual(expect.objectContaining({ event: 'sign_in_failed', reason: 'bad_credentials' }));
+  });
+});

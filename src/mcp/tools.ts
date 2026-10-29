@@ -146,6 +146,7 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
       const user = findUserById(ctx.db, ctx.userId);
       if (!user) return errorResult('AUTH_FAILED', 'This account no longer exists.');
       if (!allows(user.permissionLevel, required)) {
+        audit('tool_refused', { userId: user.id, tool: name, reason: 'permission_level', level: user.permissionLevel });
         return errorResult(
           'PERMISSION_DENIED',
           `${name} needs the "${required}" permission level; the current level is "${user.permissionLevel}". The user can change it at ${settingsUrl}.`,
@@ -156,9 +157,19 @@ export function registerTools(server: McpServer, ctx: ToolContext, level: Permis
         return { content: [{ type: 'text', text: untrusted ? wrapUntrusted(output) : output }] };
       } catch (err) {
         const mailError = toMailError(err);
-        if (mailError) return errorResult(mailError.code, mailError.message);
-        // The raw error can quote addresses and server replies, so record its type and keep the text out.
-        log('error', 'tool failed', { tool: name, userId: user.id, requestId: ctx.requestId, error: err instanceof Error ? err.name : 'unknown' });
+        if (mailError) {
+          if (mailError.code === 'PERMISSION_DENIED') {
+            audit('tool_refused', { userId: user.id, tool: name, reason: 'policy' });
+          }
+          return errorResult(mailError.code, mailError.message);
+        }
+        // The raw message can quote addresses and server replies, so keep it out and record the type.
+        log('error', 'tool failed', {
+          tool: name,
+          userId: user.id,
+          requestId: ctx.requestId,
+          error: err instanceof Error ? `${err.name}: ${err.constructor?.name ?? 'Error'}` : 'unknown',
+        });
         return errorResult('INTERNAL', 'Unexpected server error.');
       }
     };

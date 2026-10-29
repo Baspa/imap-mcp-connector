@@ -89,6 +89,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     loginFailuresSince(deps.db, ipKey, since) >= MAX_FAILURES_PER_IP ||
     loginFailuresSince(deps.db, emailKey, since) >= MAX_FAILURES_PER_EMAIL
   ) {
+    audit('sign_in_failed', { email, reason: 'rate_limited' });
     return { status: 'error', message: TOO_MANY };
   }
 
@@ -148,6 +149,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
   ) {
     deleteLoginAttempt(deps.db, ipAttemptId);
     deleteLoginAttempt(deps.db, emailAttemptId);
+    audit('sign_in_failed', { email, reason: 'rate_limited' });
     return { status: 'error', message: TOO_MANY };
   }
 
@@ -161,6 +163,7 @@ export async function login(deps: LoginDeps, input: LoginInput): Promise<LoginRe
     return { status: 'error', message: "Couldn't reach your mail server. Check the settings or try again shortly." };
   }
   if (result === 'bad_credentials') {
+    audit('sign_in_failed', { email, reason: 'bad_credentials' });
     return { status: 'error', message: BAD_CREDENTIALS };
   }
 

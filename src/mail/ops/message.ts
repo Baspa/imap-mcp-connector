@@ -1,6 +1,6 @@
 import type { ImapFlow, MessageStructureObject } from 'imapflow';
 import { MailError } from '../errors.js';
-import { formatAddress, htmlToText, plainTextDiffersFromHtml, toIsoDate, truncateUtf8 } from '../format.js';
+import { formatAddress, htmlToText, toIsoDate, truncateUtf8 } from '../format.js';
 import { resolveFolder } from './folders.js';
 
 export interface AttachmentInfo {
@@ -23,8 +23,10 @@ export interface MessageDetail {
   flags: string[];
   body: string;
   bodyTruncated: boolean;
-  /** True when the plain-text part carries content the HTML part does not, which a person would not see. */
-  plainTextDiffersFromHtml: boolean;
+  /** Which part this body came from. A mail program usually shows the HTML one instead. */
+  bodyPart: 'text/plain' | 'text/html' | 'none';
+  /** True when an HTML alternative exists that a person would see in place of this body. */
+  hasHtmlAlternative: boolean;
   attachments: AttachmentInfo[];
 }
 
@@ -89,15 +91,13 @@ export async function readMessage(client: ImapFlow, folder: string, uid: number)
   if (!msg || !msg.bodyStructure) throw new MailError('NOT_FOUND', `Message ${uid} was not found in ${folder}.`);
   const scan = scanStructure(msg.bodyStructure);
   let body = '';
-  let textPartDiverges = false;
+  let bodyPart: MessageDetail['bodyPart'] = 'none';
   if (scan.text) {
     body = (await downloadPart(client, uid, scan.text.part ?? '1', 1_000_000)).data.toString('utf8');
-    if (scan.html) {
-      const html = (await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).data.toString('utf8');
-      textPartDiverges = plainTextDiffersFromHtml(body, htmlToText(html));
-    }
+    bodyPart = 'text/plain';
   } else if (scan.html) {
     body = htmlToText((await downloadPart(client, uid, scan.html.part ?? '1', 1_000_000)).data.toString('utf8'));
+    bodyPart = 'text/html';
   }
   const truncated = truncateUtf8(body);
   return {
@@ -112,7 +112,8 @@ export async function readMessage(client: ImapFlow, folder: string, uid: number)
     flags: [...(msg.flags ?? [])],
     body: truncated.text,
     bodyTruncated: truncated.truncated,
-    plainTextDiffersFromHtml: textPartDiverges,
+    bodyPart,
+    hasHtmlAlternative: Boolean(scan.html),
     attachments: scan.attachments,
   };
 }
